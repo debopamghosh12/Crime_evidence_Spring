@@ -1,0 +1,5 @@
+# Activated with SPRING_PROFILES_ACTIVE=dev. Development only.
+# Enables DevUserSeeder. The password must come from the environment; there is deliberately no default.
+blockevidence:
+  dev-seed:
+    password: ${BLOCKEVIDENCE_DEV_SEED_PASSWORD:}

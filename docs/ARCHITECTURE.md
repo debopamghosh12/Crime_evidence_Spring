@@ -70,9 +70,9 @@ com.blockevidence.backend
 ├── ledger/              The ONLY package that may know Fabric exists.
 │   ├── LedgerService        interface (see 4.1)                                          [P1: G1]
 │   ├── FabricLedgerService  @Service stub: every method throws LedgerNotImplementedException,
-│   │                        except isReachable() which reports "not implemented"         [P1: G1]
+│   │                        except health(), which reports UNKNOWN         [P1: G1]
 │   ├── Ledger* records      LedgerEvidenceRecord, LedgerTxResult, LedgerHistoryEntry
-│   └── LedgerHealthIndicator   calls LedgerService.isReachable()                         [P1: G4]
+│   └── LedgerHealthIndicator   calls LedgerService.health()                             [P1: G4]
 │
 └── storage/             The ONLY package that may know IPFS exists.
     ├── IpfsClient           interface: pin, fetch, unpin, isReachable                    [P1: F1]
@@ -103,7 +103,7 @@ The seam that makes the Fabric ↔ Polygon swap possible. Phase 1 defines it and
 Operations, taken from the chaincode function list in G2 (**signatures provisional, expect revision in
 Phase 2 when real chaincode calls force the shapes**): `createEvidence`, `updateEvidence`,
 `updateStatus`, `initiateTransfer`, `acceptTransfer`, `getEvidence`, `getHistory`, plus
-`isReachable()` for G4. `rejectTransfer` waits for Phase 3 (D2).
+`health()` for G4 (returns `LedgerHealth`: UP / DOWN / UNKNOWN, so the stub can honestly say UNKNOWN). `rejectTransfer` waits for Phase 3 (D2).
 
 `FabricLedgerService` in Phase 1 has **no `fabric-gateway` dependency**: it imports nothing from Fabric.
 The dependency arrives when the class is actually implemented.
@@ -124,9 +124,11 @@ Every non-2xx response has the same body, including 401 and 403 produced by the 
 }
 ```
 
-`error` is a stable machine code: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `ACCESS_DENIED`, `NOT_FOUND`,
-`LEDGER_UNAVAILABLE`, `NOT_IMPLEMENTED`, `INTERNAL_ERROR`. Unexpected exceptions return
-`INTERNAL_ERROR` with no stack trace and no exception message. A `correlationId` field is added with K6
+`error` is a stable machine code. Ours: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `ACCESS_DENIED`,
+`NOT_IMPLEMENTED`, `INTERNAL_ERROR` (no stack trace, no exception message). For errors raised by Spring MVC
+itself the code is the HTTP status name (`BAD_REQUEST`, `NOT_FOUND`, `METHOD_NOT_ALLOWED` ...).
+`LEDGER_UNAVAILABLE` is reserved for Phase 2, when a real ledger can be unavailable. `fieldErrors` is always
+present (empty unless VALIDATION_FAILED). A `correlationId` field is added with K6
 (P2), not now.
 
 ### 4.3 Authentication and RBAC (A1, A3)
@@ -151,10 +153,10 @@ Every non-2xx response has the same body, including 401 and 403 produced by the 
 `GET /actuator/health` reports three components: `db` (Spring built-in), `ipfs`, `ledger`.
 
 - `ipfs`: `HttpIpfsClient.isReachable()` calls the Kubo RPC `POST {api-url}/api/v0/version` (Kubo's RPC
-  API is POST-only; to be confirmed against a running node). UP / DOWN.
+  API is POST-only; **confirmed** against a real Kubo node and a fake-Kubo unit test that answers GET with 405). UP / DOWN.
 - `ledger`: the stub reports **UNKNOWN** with detail `"FabricLedgerService not implemented (Phase 1
   stub)"`. Spring's default aggregation ignores UNKNOWN when other components are UP, so overall health
-  stays honest without the ledger stub making the whole app look broken. To be confirmed when built.
+  stays honest without the ledger stub making the whole app look broken. **Confirmed** by unit test and live run (overall UP, ledger UNKNOWN; overall 503 when IPFS is stopped).
 - Public: status only. Component details visible to `ADMIN` (`show-details: when-authorized`).
 - Only `health` is exposed under `/actuator` in Phase 1.
 
@@ -206,7 +208,7 @@ Client ─► JwtAuthenticationFilter ─ parse + verify JWT ─► SecurityCont
 ```
 GET /actuator/health ─► DataSourceHealthIndicator
                      ─► IpfsHealthIndicator   ─► IpfsClient.isReachable()
-                     ─► LedgerHealthIndicator ─► LedgerService.isReachable()   (stub → UNKNOWN)
+                     ─► LedgerHealthIndicator ─► LedgerService.health()   (stub → UNKNOWN)
 ```
 
 ### 5.4 Register evidence (TARGET, Phase 2, not built; shown so the seams make sense)
@@ -237,15 +239,15 @@ was never stored.
 
 | Dependency | Scope | For | Rejected alternative |
 |---|---|---|---|
-| `spring-boot-starter-web` | compile | REST; also provides `RestClient` for IPFS (no extra HTTP lib) | WebFlux (nothing here needs reactive) |
+| `spring-boot-starter-webmvc` (Boot 4 name) | compile | REST; also provides `RestClient` for IPFS (no extra HTTP lib) | WebFlux (nothing here needs reactive) |
 | `spring-boot-starter-validation` | compile | K1 | none |
 | `spring-boot-starter-security` | compile | A1, A3 | hand-rolled filters |
 | `spring-boot-starter-data-jpa` | compile | A1 User entity; later H1 Specifications (named in the feature list) | JDBC/jOOQ |
 | `postgresql` | runtime | DB | H2 (drifts from Postgres behaviour) |
-| `flyway-core` + `flyway-database-postgresql` | compile/runtime | versioned schema | `ddl-auto=update`: silent drift, weak audit story for an evidence system |
-| `jjwt-api` / `jjwt-impl` / `jjwt-jackson` (0.12.x) | compile/runtime | A1 (named in the feature list) | `spring-security-oauth2-resource-server` (heavier, built for external IdPs) |
+| `spring-boot-starter-flyway` + `flyway-database-postgresql` | compile/runtime | versioned schema | `ddl-auto=update`: silent drift, weak audit story for an evidence system |
+| `jjwt-api` / `jjwt-impl` / `jjwt-jackson` (0.12.7) | compile/runtime | A1 (named in the feature list) | `spring-security-oauth2-resource-server` (heavier, built for external IdPs) |
 | `spring-boot-starter-actuator` | compile | G4 | custom `/health` controller |
-| `spring-boot-starter-test`, `spring-security-test` | test | L1 | none |
+| Boot 4 per-starter test starters (`spring-boot-starter-*-test`, generated by Initializr) | test | L1 | none |
 
 Deliberately **not** added yet: `fabric-gateway` (stub needs none), Testcontainers/WireMock (L2, Phase
 5), springdoc (K2), Bucket4j (K4), Spring Retry (F5).
@@ -266,7 +268,7 @@ Defaults are what I'll do unless you say otherwise; reply with only the ones you
 | Q1 | `git init` + baseline commit of the docs before any code, so ROLLBACK.md can name a revert target? | **Yes** | Skip; ROLLBACK.md stays vague |
 | Q2 | Base package / Maven `groupId` | `com.blockevidence.backend` | your college/personal namespace |
 | Q3 | Refresh tokens | DB-stored, rotating, revocable | Stateless refresh JWT (simpler, cannot be revoked) |
-| Q4 | `LedgerService` scope now | Full G2 operation list, provisional | `isReachable()` only, add operations in Phase 2 |
+| Q4 | `LedgerService` scope now | Full G2 operation list, provisional | `health()` only, add operations in Phase 2 |
 | Q5 | How do users exist before A4? | Dev-profile-only seeder: one user per role, password from env var `BLOCKEVIDENCE_DEV_SEED_PASSWORD`; no user-creation endpoint | Pull a minimal `POST /api/admin/users` (part of A4) into Phase 1, which is outside the phase |
 | Q6 | Ledger health while stubbed | UNKNOWN | DOWN (honest but turns overall health red) |
 | Q7 | Dependencies in section 7 | approve as listed | strike or swap any row |
@@ -280,3 +282,31 @@ as stated (dev-only seeder, no user-creation endpoint). **Q8 changed:** Spring B
 and moved some Actuator packages, so the artifact names in §7 are indicative; the generated `pom.xml`
 is authoritative. K3 stays in Phase 1. Project generation: Maven, via start.spring.io (the service
 IntelliJ's Spring Boot wizard calls).
+
+## 10. As built (Phase 1): deviations from the draft above
+
+Phase 1 was implemented 2026-09-22. Where the code differs from sections 3-9, the code is authoritative
+and the difference is listed here. Verification evidence: `docs/TEST_CHECKLIST.md`.
+
+- **Ledger health is `LedgerService.health()` returning `LedgerHealth`, not `isReachable()`**, because a
+  boolean cannot express UNKNOWN. `IpfsClient.isReachable()` stays boolean (UP/DOWN only).
+- **Extra classes not in the section 3 tree:** `config/ClockConfig` (injectable Clock),
+  `config/DevUserSeeder` (dev profile only, Q5), `exception/ApiErrorWriter` (writes ApiError from the
+  security filters), `exception/AuthenticationFailedException`, `exception/FeatureNotImplementedException`
+  (base of the two stub exceptions, so the exception handler need not import ledger/storage),
+  `security/DatabaseUserDetailsService`, `ledger/LedgerHealth`, `ledger/LedgerTxResult`,
+  `ledger/LedgerHistoryEntry`, `ledger/LedgerEvidenceRecord`, DTOs `LoginRequest`, `RefreshTokenRequest`
+  (shared by refresh and logout), `TokenResponse`, `MeResponse`.
+- **JVM default timezone is pinned to UTC in `main()`** (bug: `docs/bugs/jvm-timezone-postgres.md`).
+- **Spring Boot 4.1.1**, not 3.5.x (D-003). Boot 4 moved health classes to
+  `org.springframework.boot.health.contributor` and uses Jackson 3 (`tools.jackson`) for MVC; jjwt's
+  Jackson 2 coexists on the classpath without conflict (checked with `dependency:tree`).
+- **`JwtAuthenticationFilter` is constructed with `new` inside `SecurityConfig`, not a bean**, so Boot
+  does not register it a second time as a plain servlet filter.
+- **Known limitation:** an access token stays valid until it expires (15 min) even if the user is
+  deactivated or their role changes. Refresh is cut off immediately. Revisit when A4 lands: either a
+  per-request enabled check or a shorter access TTL.
+- **Known limitation:** expired/revoked `refresh_tokens` rows are never purged (no housekeeping job yet).
+- **No `@SpringBootTest` context test in Phase 1.** It needs a real database; Testcontainers arrives with
+  L2 (Phase 5). Coverage instead: unit tests, `@WebMvcTest` slice with the real security chain, and the
+  live run recorded in the checklist. See D-012.

@@ -1,0 +1,42 @@
+# K3: every environment-specific value and every secret comes from an environment variable.
+# Nothing secret has a default here (constraint C-07): DB_PASSWORD and BLOCKEVIDENCE_JWT_SECRET are
+# required, and the application refuses to start without them.
+spring:
+  application:
+    name: blockevidence-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/blockevidence}
+    username: ${DB_USER:blockevidence}
+    password: ${DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema (V*.sql). Hibernate only checks that the entities match it.
+      ddl-auto: validate
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      # Anonymous callers see only the overall status. Per-component detail (db / ipfs / ledger)
+      # is shown to authenticated users holding the ADMIN role.
+      show-details: when-authorized
+      roles: ADMIN
+
+blockevidence:
+  jwt:
+    # No default: empty binds to "" and fails @NotBlank in JwtProperties, so startup aborts.
+    secret: ${BLOCKEVIDENCE_JWT_SECRET:}
+    access-ttl: ${JWT_ACCESS_TTL:15m}
+    refresh-ttl: ${JWT_REFRESH_TTL:7d}
+  ipfs:
+    api-url: ${IPFS_API_URL:http://localhost:5001}
+  fabric:
+    channel: ${FABRIC_CHANNEL:crimechannel}
+    chaincode: ${FABRIC_CHAINCODE:basic}
