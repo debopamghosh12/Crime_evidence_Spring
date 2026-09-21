@@ -88,7 +88,9 @@ controller ──► service ──► repository
                   │  ├───► ledger  (via LedgerService interface only)
                   │  └───► storage (via IpfsClient interface only)
 security  ◄── used by controller (principal) and config; never imports service/ledger/storage
+domain    ◄── pure shared types (enums, Cid, EvidenceMetadata); imported by dto, service, ledger, storage; imports none of them
 ledger, storage, repository  never import controller, service, or each other
+exception ◄── ApiException base; ledger/ and storage/ extend it, exception/ never imports them
 ```
 
 Rules 1 and 2 restate CLAUDE.md hard constraints: no Fabric call outside `ledger/`, and controllers
@@ -310,3 +312,43 @@ and the difference is listed here. Verification evidence: `docs/TEST_CHECKLIST.m
 - **No `@SpringBootTest` context test in Phase 1.** It needs a real database; Testcontainers arrives with
   L2 (Phase 5). Coverage instead: unit tests, `@WebMvcTest` slice with the real security chain, and the
   live run recorded in the checklist. See D-012.
+
+## 11. As built (Phase 2): evidence management, 2026-09-23
+
+Spring-side Phase 2 is implemented and verified live against the **in-memory reference ledger**; the
+Fabric chaincode and `FabricLedgerService` await owner approval of `docs/CHAINCODE_DESIGN.md`.
+
+**New packages/classes.** `domain/` (EvidenceStatus, EvidenceType, VerificationStatus, Cid, EvidenceMetadata);
+`ledger/` (final `LedgerService`, `LedgerActor`, `LedgerNewEvidence`, `LedgerEvidenceRecord`,
+`LedgerHistoryEntry`, `LedgerAction`, `LedgerErrorCode`, `LedgerException`, `InMemoryLedgerService`);
+`storage/` (final `IpfsClient`, real `HttpIpfsClient`, `ContentReader`, `ContentNotFoundException`,
+`StorageUnavailableException`); `service/` (`EvidenceService`, `VerificationService`, `Sha256`,
+`HashingInputStream`); `controller/EvidenceController`; `security/Permissions`; `exception/ApiException`;
+`config/UploadProperties`. Final interface signatures and the reasons they changed: DECISIONS D-016.
+
+**Endpoint surface added**
+
+| Method + path | Roles | Feature |
+|---|---|---|
+| `POST /api/evidence` (multipart: `metadata` JSON + optional `file`) | COLLECTOR, FORENSIC_ANALYST | B1, B2, C1 |
+| `GET /api/evidence/{id}[?verify=true]` | any authenticated | B3 |
+| `GET /api/evidence/by-cid/{cid}` | any authenticated | B3 |
+| `GET /api/evidence/{id}/versions/{n}` | any authenticated | B4 |
+| `GET /api/evidence/{id}/history` | any authenticated | C3 |
+| `GET /api/evidence/{id}/verify` | any authenticated | C2 |
+| `PUT /api/evidence/{id}` | COLLECTOR, FORENSIC_ANALYST | B4 |
+| `POST /api/evidence/{id}/disposal` | COLLECTOR, PROSECUTOR | B5 |
+| `POST /api/evidence/{id}/disposal/approve` and `/reject` | JUDGE | B5 |
+| `DELETE` anything under `/api/evidence` | nobody: 405 | C-02 |
+
+**Configuration added:** `UPLOAD_MAX_FILE_SIZE` (50MB), `UPLOAD_MAX_REQUEST_SIZE` (52MB),
+`IPFS_TRANSFER_TIMEOUT` (60s), `IPFS_LOOKUP_TIMEOUT` (10s); profile `memory-ledger`; allow-list
+`blockevidence.upload.allowed-content-types`.
+
+**Known limitations (all also in the feature write-ups):**
+1. Nothing here is on Fabric yet: with the default profile every evidence call answers 501.
+2. IPFS content is not private (D-020); a default Kubo node joins the public network. Dev uses `--offline`.
+3. Read access is not restricted by case (A5 unscheduled): any authenticated role reads any evidence.
+4. The upload type check trusts the client-declared content type (D-026).
+5. Retry on Fabric MVCC conflicts (F5) is not built; only compensation is (D-024).
+6. Metadata documents may contain descriptive text readable by anyone with the CID (F2 not built).

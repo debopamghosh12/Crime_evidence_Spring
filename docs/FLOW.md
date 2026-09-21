@@ -3,8 +3,10 @@
 How execution travels through the code. Update whenever a call path is added or changed; mark the part
 being modified with **[MODIFYING]**.
 
-**Status 2026-09-22:** all Phase 1 paths below are implemented and verified live. Nothing is marked
-[MODIFYING]. Phase 2 (evidence, files, ledger) has not been started.
+**Status 2026-09-23:** Phase 1 paths (sections 1-5) are implemented and verified live. Phase 2 Spring-side
+paths (sections 7-11) are implemented and verified live **against the in-memory reference ledger**.
+**[NOT BUILT, AWAITING APPROVAL]:** the real Fabric path in section 12 (`FabricLedgerService` and the
+chaincode); until it exists, the default profile answers evidence calls with 501 NOT_IMPLEMENTED.
 
 Package prefix `com.blockevidence.backend` is omitted. Feature IDs refer to `docs/FEATURE_LIST.md`.
 
@@ -93,16 +95,80 @@ GET /actuator/health
  any component DOWN → overall DOWN, HTTP 503.
 ```
 
-## 6. Stubs (G1, F1): the seams later phases fill in
+## 6. Seams (G1, F1)
 
 ```
-(future) Service ──► LedgerService (interface)  ◄── FabricLedgerService   every operation throws
-                                                     LedgerNotImplementedException → 501 NOT_IMPLEMENTED
-(future) Service ──► IpfsClient    (interface)  ◄── HttpIpfsClient        pin/fetch/unpin throw
-                                                     StorageNotImplementedException → 501; isReachable is real
+EvidenceService ──► LedgerService (interface) ◄── FabricLedgerService  every operation throws
+                                                   LedgerNotImplementedException -> 501   [AWAITING G2 APPROVAL]
+                                              ◄── InMemoryLedgerService  only with profile memory-ledger
+EvidenceService ──► IpfsClient    (interface) ◄── HttpIpfsClient        real: pin / read / unpin / isReachable
 ```
-No controller or service calls these yet, so the only Phase 1 caller is the health path in section 5.
+Callers of the two interfaces: `EvidenceService`, `VerificationService`, and the health indicators.
 
-## 7. Target flows (NOT BUILT, shown for orientation; see ARCHITECTURE.md 5.4)
-Register evidence, verify, custody transfer and the rest arrive in Phase 2 and later. Do not treat them as
-current behaviour.
+## 7. Register evidence (B1, B2, C1)
+
+```
+POST /api/evidence   multipart: JSON part "metadata" + optional binary part "file"
+ └─ Spring multipart limit (50 MB) ............................................. 413 if exceeded
+ └─ JwtAuthenticationFilter -> AuthenticatedUser (the ONLY source of the registrant, C-05)
+ └─ EvidenceController.register  @PreAuthorize(COLLECTOR|FORENSIC_ANALYST)      403 otherwise
+     └─ @Valid RegisterEvidenceRequest (no collector field exists)              400 VALIDATION_FAILED
+     └─ EvidenceService.register
+         ├─ DIGITAL needs a file / PHYSICAL forbids one / content type on allow-list   400/400/415
+         ├─ evidenceId = "EV-" + UUID (server-generated)
+         ├─ storeFile:  HashingInputStream(file) ─► IpfsClient.pin ─► fileCid        C1: sha256 + byte count computed WHILE streaming
+         ├─ storeMetadata: JSON bytes ─► sha256 ─► IpfsClient.pin ─► metadataCid
+         ├─ LedgerService.createEvidence(LedgerNewEvidence, LedgerActor)   ledger written LAST
+         │      on ANY failure: compensate(pins)  = unpin only CIDs the ledger does not reference
+         └─ get(evidenceId, false)  ─► response (201)
+```
+
+## 8. Retrieve (B3), versions (B4), history (C3)
+
+```
+GET /api/evidence/{id}[?verify=true]      any authenticated role
+ └─ EvidenceService.get ─► LedgerService.getEvidence ........ absent -> 404
+     ├─ IpfsClient.read(metadataCid) ─► EvidenceMetadata     IPFS failure -> metadataAvailable=false (ledger data still returned, F1)
+     └─ verify=true ? VerificationService.verify : NOT_CHECKED
+GET /api/evidence/by-cid/{cid}   ─► LedgerService.findEvidenceIdsByCid ─► get(id) for each      404 if none
+GET /api/evidence/{id}/versions/{n}  ─► LedgerService.getHistory ─► entry with version n ─► metadata of THAT version
+GET /api/evidence/{id}/history       ─► LedgerService.getHistory ─► version, txId, ledger timestamp, action, actor, reason
+```
+
+## 9. Verify (C2)
+
+```
+GET /api/evidence/{id}/verify
+ └─ EvidenceService.verify ─► LedgerService.getEvidence (404 if unknown)
+     └─ VerificationService.verify(record)
+         ├─ file (DIGITAL only):  IpfsClient.read(fileCid, Sha256::hex)  vs record.fileSha256
+         ├─ metadata:             IpfsClient.read(metadataCid, Sha256::hex)  vs record.metadataSha256
+         │      ContentNotFoundException -> component NOT_FOUND;  StorageUnavailableException -> 503 (NOT a verdict)
+         └─ overall = TAMPERED > NOT_FOUND > VERIFIED
+```
+
+## 10. Versioned update (B4)
+
+```
+PUT /api/evidence/{id}   {expectedVersion, reason, description?, location?, notes?}     COLLECTOR|FORENSIC_ANALYST
+ └─ EvidenceService.update
+     ├─ getEvidence; version != expectedVersion -> 409 VERSION_CONFLICT (before touching IPFS)
+     ├─ readVerifiedMetadata: read current document, sha256 must equal ledger hash else 409 INTEGRITY_CHECK_FAILED
+     ├─ merge changed fields; metadataVersion+1; previousMetadataCid = current
+     ├─ storeMetadata (NEW document; old one untouched) ─► LedgerService.updateEvidence(id, expectedVersion, newCid, newSha, reason, actor)
+     └─ on failure: compensate(new pin)
+```
+
+## 11. Disposal instead of delete (B5)
+
+```
+POST /api/evidence/{id}/disposal          {expectedVersion, reason}   COLLECTOR|PROSECUTOR  ─► LedgerService.requestDisposal
+POST /api/evidence/{id}/disposal/approve  {expectedVersion, note}     JUDGE ─► LedgerService.approveDisposal  ─► status DISPOSED, record frozen
+POST /api/evidence/{id}/disposal/reject   {expectedVersion, note}     JUDGE ─► LedgerService.rejectDisposal
+DELETE anywhere under /api/evidence  ─► 405 (no such mapping exists, C-02)
+```
+Nothing is unpinned from IPFS at any point.
+
+## 12. [NOT BUILT, AWAITING G2 APPROVAL] Real ledger path
+`LedgerService` (interface) -> `FabricLedgerService` -> fabric-gateway (gRPC, Org1 peer) -> chaincode `evidence`
+(Go). Designed in `docs/CHAINCODE_DESIGN.md`; not implemented. Do not treat as current behaviour.

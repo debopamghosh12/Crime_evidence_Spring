@@ -2,7 +2,9 @@ package com.blockevidence.backend.ledger;
 
 import java.time.Instant;
 
-/** One version of an evidence record as returned by GetHistory (C3). Provisional shape. */
-public record LedgerHistoryEntry(String txId, Instant timestamp, int version, String status, String cid,
-        String sha256, String actorId, String reason) {
+/**
+ * One committed version of a record, as returned by the ledger's history (C3): the transaction that
+ * wrote it, that transaction's ledger timestamp, and the full record as of that write.
+ */
+public record LedgerHistoryEntry(String txId, Instant timestamp, LedgerEvidenceRecord record) {
 }

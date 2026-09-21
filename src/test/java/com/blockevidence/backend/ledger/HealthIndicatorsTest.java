@@ -5,7 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.UUID;
+
 import com.blockevidence.backend.config.FabricProperties;
+import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.domain.EvidenceType;
+import com.blockevidence.backend.security.Role;
+import com.blockevidence.backend.support.FakeIpfsClient;
 import com.blockevidence.backend.storage.IpfsClient;
 import com.blockevidence.backend.storage.IpfsHealthIndicator;
 import org.junit.jupiter.api.Test;
@@ -29,13 +35,20 @@ class HealthIndicatorsTest {
 
     @Test
     void everyFabricStubOperationThrowsNotImplemented() {
-        assertThatThrownBy(() -> stub.createEvidence("e", "c", "cid", "h", "u")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.updateEvidence("e", "cid", "h", "r", "u")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.updateStatus("e", "S", "r", "u")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.initiateTransfer("e", "to", "r", "u")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.acceptTransfer("e", "u")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.getEvidence("e")).isInstanceOf(LedgerNotImplementedException.class);
-        assertThatThrownBy(() -> stub.getHistory("e")).isInstanceOf(LedgerNotImplementedException.class);
+        LedgerActor actor = new LedgerActor(UUID.randomUUID().toString(), Role.COLLECTOR);
+        String id = "EV-" + UUID.randomUUID();
+        String cid = FakeIpfsClient.cidOf("x".getBytes());
+        var evidence = new LedgerNewEvidence(id, "C", EvidenceType.PHYSICAL, cid, "a".repeat(64), null, null, null);
+
+        assertThatThrownBy(() -> stub.createEvidence(evidence, actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.updateEvidence(id, 1, cid, "a".repeat(64), "r", actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.updateStatus(id, 1, EvidenceStatus.PROCESSING, "r", actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.requestDisposal(id, 1, "r", actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.approveDisposal(id, 1, "r", actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.rejectDisposal(id, 1, "r", actor)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.getEvidence(id)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.getHistory(id)).isInstanceOf(LedgerNotImplementedException.class);
+        assertThatThrownBy(() -> stub.findEvidenceIdsByCid(cid)).isInstanceOf(LedgerNotImplementedException.class);
     }
 
     @Test

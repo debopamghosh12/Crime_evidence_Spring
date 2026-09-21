@@ -8,6 +8,11 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/blockevidence}
     username: ${DB_USER:blockevidence}
     password: ${DB_PASSWORD}
+  servlet:
+    multipart:
+      # B2: hard size limit, enforced by the servlet container before any controller code runs.
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:52MB}
   jpa:
     open-in-view: false
     hibernate:
@@ -37,6 +42,8 @@ blockevidence:
     refresh-ttl: ${JWT_REFRESH_TTL:7d}
   ipfs:
     api-url: ${IPFS_API_URL:http://localhost:5001}
+    transfer-timeout: ${IPFS_TRANSFER_TIMEOUT:60s}
+    lookup-timeout: ${IPFS_LOOKUP_TIMEOUT:10s}
   fabric:
     channel: ${FABRIC_CHANNEL:crimechannel}
     chaincode: ${FABRIC_CHAINCODE:basic}

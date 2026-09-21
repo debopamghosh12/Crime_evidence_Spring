@@ -53,6 +53,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return body(status, status.name(), message, request, List.of());
     }
 
+    @ExceptionHandler(ApiException.class)
+    ResponseEntity<Object> handleApiException(ApiException ex, WebRequest request) {
+        // Ledger and storage failures carry their own status and code (see ApiException).
+        return body(ex.getStatus(), ex.getCode(), ex.getMessage(), request, List.of());
+    }
+
     @ExceptionHandler(AuthenticationFailedException.class)
     ResponseEntity<Object> handleAuthenticationFailed(AuthenticationFailedException ex, WebRequest request) {
         return body(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", ex.getMessage(), request, List.of());
