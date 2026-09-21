@@ -44,7 +44,10 @@ Automated: `EvidenceServiceTest` (register digital/physical, registrant from tok
 compensation cases), `EvidenceControllerTest` (role matrix, validation, forged collector).
 
 ## Known limits
-- Not run on Fabric. With the default profile this endpoint answers `501`.
+- ~~Not run on Fabric.~~ (Superseded 2026-09-22, see the update below.)
 - Metadata is stored on IPFS in the clear; do not put personal data in `description`/`notes` (F2 not built).
 - No Case entity yet (E1-E3, Phase 3): `caseId` is a validated string.
 - Physical-evidence fields (tag/barcode/locker, B7) are not modelled.
+
+## Update 2026-09-22: on real Fabric
+Registration now writes to the real Fabric ledger (`CreateEvidence`, endorsed by both orgs, committed before the API answers). The live run through Spring -> Fabric matched the reference run line for line (TEST_CHECKLIST P2-F.6). A forged `collector` was ignored on Fabric too: `createdBy` and `metadata.collectorId` equal the JWT user. With the ledger down, register answers `503 LEDGER_UNAVAILABLE`; the IPFS pins made for it are deliberately left in place because the ledger cannot confirm they are unreferenced (D-037).

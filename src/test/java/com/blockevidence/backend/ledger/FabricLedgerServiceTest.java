@@ -1,0 +1,245 @@
+package com.blockevidence.backend.ledger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import com.blockevidence.backend.config.FabricProperties;
+import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.domain.EvidenceType;
+import com.blockevidence.backend.security.Role;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * FabricLedgerService without a network. The JSON fixtures in src/test/resources/fabric are REAL output
+ * captured from the deployed chaincode on the Fabric peers (see TEST_CHECKLIST.md), so these tests pin the
+ * Go-to-Java wire format against what the chaincode actually emits, not against what was assumed.
+ */
+class FabricLedgerServiceTest {
+
+    final JsonMapper vanilla = JsonMapper.builder().build();   // NOT Boot's lenient mapper: the service must cope itself
+
+    FabricProperties props(String tls, String cert, String key) {
+        return new FabricProperties("crimechannel", "evidence", "localhost:7051", "peer0.org1.example.com",
+                "Org1MSP", tls, cert, key, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1),
+                Duration.ofSeconds(1));
+    }
+
+    FabricLedgerService unconfigured() {
+        return new FabricLedgerService(props(null, null, null), vanilla);
+    }
+
+    static byte[] fixture(String name) throws IOException {
+        try (var in = FabricLedgerServiceTest.class.getResourceAsStream("/fabric/" + name)) {
+            return in.readAllBytes();
+        }
+    }
+
+    static String text(String name) throws IOException {
+        return new String(fixture(name), StandardCharsets.UTF_8);
+    }
+
+    // ------------------------------------------------------------------ wire format (real peer output)
+
+    @Test
+    void parsesTheTransactionResultOfARealCommittedWrite() throws IOException {
+        var tx = unconfigured().parse(fixture("tx-result.json"), FabricLedgerService.WireTxResult.class);
+
+        assertThat(tx.txId()).matches("[0-9a-f]{64}");
+        assertThat(tx.timestamp()).isAfter(Instant.parse("2026-01-01T00:00:00Z"));   // the ledger's own time
+        assertThat(tx.version()).isEqualTo(1);
+    }
+
+    @Test
+    void parsesARealPhysicalRecordWhoseFileAndDisposalFieldsAreAbsent() throws IOException {
+        // This shape is exactly what failed the contract's schema check on the first live query.
+        LedgerEvidenceRecord r = unconfigured().parse(fixture("get-physical.json"), LedgerEvidenceRecord.class);
+
+        assertThat(r.evidenceType()).isEqualTo(EvidenceType.PHYSICAL);
+        assertThat(r.status()).isEqualTo(EvidenceStatus.COLLECTED);
+        assertThat(r.version()).isEqualTo(1);
+        assertThat(r.fileCid()).isNull();
+        assertThat(r.fileSha256()).isNull();
+        assertThat(r.fileSize()).isNull();
+        assertThat(r.disposal().state()).isEqualTo(LedgerEvidenceRecord.DisposalState.NONE);
+        assertThat(r.disposal().requestedAt()).isNull();
+        assertThat(r.createdAt()).isEqualTo(r.updatedAt());
+        assertThat(r.lastAction()).isEqualTo(LedgerAction.CREATED);
+        assertThat(r.currentCustodian()).isEqualTo(r.createdBy());
+    }
+
+    @Test
+    void parsesARealDisposedDigitalRecord() throws IOException {
+        LedgerEvidenceRecord r = unconfigured().parse(fixture("get-digital-disposed.json"), LedgerEvidenceRecord.class);
+
+        assertThat(r.evidenceType()).isEqualTo(EvidenceType.DIGITAL);
+        assertThat(r.status()).isEqualTo(EvidenceStatus.DISPOSED);
+        assertThat(r.version()).isEqualTo(5);
+        assertThat(r.fileSize()).isEqualTo(1234L);
+        assertThat(r.fileCid()).startsWith("b");
+        assertThat(r.fileSha256()).hasSize(64);
+        assertThat(r.lastAction()).isEqualTo(LedgerAction.DISPOSAL_APPROVED);
+        assertThat(r.updatedByRole()).isEqualTo("JUDGE");
+        assertThat(r.disposal().state()).isEqualTo(LedgerEvidenceRecord.DisposalState.NONE);
+    }
+
+    @Test
+    void parsesARealHistoryOldestFirstWithLedgerTxIdsAndTimestamps() throws IOException {
+        List<LedgerHistoryEntry> h = unconfigured().parse(fixture("history-digital.json"),
+                new TypeReference<List<LedgerHistoryEntry>>() {
+                });
+
+        assertThat(h).extracting(e -> e.record().version()).containsExactly(1, 2, 3, 4, 5);
+        assertThat(h).extracting(e -> e.record().lastAction()).containsExactly(LedgerAction.CREATED,
+                LedgerAction.METADATA_UPDATED, LedgerAction.STATUS_CHANGED, LedgerAction.DISPOSAL_REQUESTED,
+                LedgerAction.DISPOSAL_APPROVED);
+        assertThat(h).extracting(LedgerHistoryEntry::txId).allMatch(t -> t.matches("[0-9a-f]{64}")).doesNotHaveDuplicates();
+        assertThat(h).extracting(LedgerHistoryEntry::timestamp).isSorted();
+        // the old version is still there with its own metadata pointer
+        assertThat(h.get(0).record().metadataCid()).isNotEqualTo(h.get(1).record().metadataCid());
+        assertThat(h.get(1).record().metadataCid()).isEqualTo(h.get(4).record().metadataCid());
+    }
+
+    @Test
+    void parsesCidLookupResultsIncludingNoMatch() throws IOException {
+        assertThat(unconfigured().parse(fixture("find-by-cid.json"), new TypeReference<List<String>>() {
+        })).hasSize(1).allMatch(id -> id.startsWith("EV-"));
+        assertThat(unconfigured().parse(fixture("find-by-cid-none.json"), new TypeReference<List<String>>() {
+        })).isEmpty();
+    }
+
+    // ------------------------------------------------------------- error translation (real messages)
+
+    @Test
+    void translatesTheRealPeerErrorForAStaleVersion() throws IOException {
+        LedgerException e = FabricErrors.translate(text("error-version-conflict.txt"), false, false);
+
+        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.VERSION_CONFLICT);
+        assertThat(e.getStatus().value()).isEqualTo(409);
+        assertThat(e.getMessage()).isEqualTo("Expected version 9 but the record is at version 1");
+    }
+
+    @Test
+    void translatesTheRealPeerErrorForAnUnknownId() throws IOException {
+        LedgerException e = FabricErrors.translate(text("error-not-found.txt"), false, false);
+
+        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.EVIDENCE_NOT_FOUND);
+        assertThat(e.getStatus().value()).isEqualTo(404);
+    }
+
+    @Test
+    void everyChaincodeCodeMapsToItsOwnLedgerErrorCode() {
+        for (LedgerErrorCode code : LedgerErrorCode.values()) {
+            if (code == LedgerErrorCode.LEDGER_UNAVAILABLE) {
+                continue;   // raised on the Java side, never returned by the chaincode
+            }
+            String wire = "endorsement failure during invoke. response: status:500 message:\"" + code.name() + ": detail here\"";
+            LedgerException e = FabricErrors.translate(wire, false, false);
+            assertThat(e.ledgerCode()).isEqualTo(code);
+            assertThat(e.getMessage()).isEqualTo("detail here");
+        }
+    }
+
+    @Test
+    void theMessageStopsAtTheEndOfTheChaincodeFragmentAndDoesNotRunIntoTheGatewaysNextOne() {
+        // Shape seen on a live run: the gateway's own text follows the chaincode's message as another fragment.
+        String flattened = "ABORTED: failed to endorse transaction\n"
+                + "endorse error on peer0.org1: chaincode response 500, INVALID_STATE: Evidence is DISPOSED and can no longer change\n"
+                + "ABORTED: failed to endorse transaction, see attached details for more info";
+
+        LedgerException e = FabricErrors.translate(flattened, false, false);
+
+        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.INVALID_STATE);
+        assertThat(e.getMessage()).isEqualTo("Evidence is DISPOSED and can no longer change");
+    }
+
+    @Test
+    void anMvccCommitConflictBecomesAVersionConflict() {
+        LedgerException e = FabricErrors.translate("transaction commit failed MVCC_READ_CONFLICT", false, true);
+        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.VERSION_CONFLICT);
+    }
+
+    @Test
+    void connectivityFailuresAndUnknownTextAreLedgerUnavailableAndNeverLeakDetail() {
+        assertThat(FabricErrors.translate("UNAVAILABLE: io exception connect refused 127.0.0.1:7051", true, false).ledgerCode())
+                .isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE);
+        LedgerException other = FabricErrors.translate("some internal stack trace with secret path /x/y", false, false);
+        assertThat(other.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE);
+        assertThat(other.getMessage()).doesNotContain("secret").doesNotContain("/x/y");
+        // a code-looking word that is not a whole known code must not be mistaken for one
+        assertThat(FabricErrors.translate("NOT_INVALID_STATE_REALLY", false, false).ledgerCode())
+                .isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE);
+    }
+
+    // ----------------------------------------------------- not configured / cannot connect (no network)
+
+    @Test
+    void withoutAnIdentityEveryOperationIsLedgerUnavailableAndHealthIsUnknown() {
+        FabricLedgerService service = unconfigured();
+        var actor = new LedgerActor(UUID.randomUUID().toString(), Role.COLLECTOR);
+        String id = "EV-" + UUID.randomUUID();
+        String cid = "b" + "a".repeat(52);
+
+        List<Runnable> calls = List.of(
+                () -> service.createEvidence(new LedgerNewEvidence(id, "C", EvidenceType.PHYSICAL, cid, "a".repeat(64), null, null, null), actor),
+                () -> service.updateEvidence(id, 1, cid, "a".repeat(64), "r", actor),
+                () -> service.updateStatus(id, 1, EvidenceStatus.PROCESSING, "r", actor),
+                () -> service.requestDisposal(id, 1, "r", actor),
+                () -> service.approveDisposal(id, 1, "r", actor),
+                () -> service.rejectDisposal(id, 1, "r", actor),
+                () -> service.getEvidence(id),                 // must throw, NOT return Optional.empty()
+                () -> service.getHistory(id),
+                () -> service.findEvidenceIdsByCid(cid));
+        for (Runnable call : calls) {
+            assertThatThrownBy(call::run).isInstanceOfSatisfying(LedgerException.class,
+                    e -> assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE));
+        }
+        LedgerHealth health = service.health();
+        assertThat(health.state()).isEqualTo(LedgerHealth.State.UNKNOWN);
+        assertThat(health.detail()).contains("not configured").contains("crimechannel").contains("evidence");
+    }
+
+    @Test
+    void unreadableIdentityFilesAreLedgerUnavailableAndHealthIsDown(@TempDir Path dir) {
+        String missing = dir.resolve("does-not-exist.pem").toString();
+        FabricLedgerService service = new FabricLedgerService(props(missing, missing, missing), vanilla);
+
+        assertThatThrownBy(() -> service.getEvidence("EV-" + UUID.randomUUID()))
+                .isInstanceOfSatisfying(LedgerException.class, e -> {
+                    assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE);
+                    assertThat(e.getMessage()).doesNotContain(dir.toString());          // no filesystem paths in the API error
+                });
+        assertThat(service.health().state()).isEqualTo(LedgerHealth.State.DOWN);
+    }
+
+    @Test
+    void propertiesReportWhetherTheIdentityIsConfigured() {
+        assertThat(props(null, null, null).isConfigured()).isFalse();
+        assertThat(props("a", "b", " ").isConfigured()).isFalse();
+        assertThat(props("a", "b", "c").isConfigured()).isTrue();
+        assertThat(props("a", "b", "c").toString()).doesNotContain("secret");
+    }
+
+    @Test
+    void aConfiguredPathMayBeAFileOrADirectoryHoldingExactlyOneFile(@TempDir Path dir) throws IOException {
+        Path file = Files.writeString(dir.resolve("cert.pem"), "x");
+        assertThat(FabricLedgerService.resolveFile(file.toString())).isEqualTo(file);
+        assertThat(FabricLedgerService.resolveFile(dir.toString())).isEqualTo(file);
+
+        Files.writeString(dir.resolve("second.pem"), "y");
+        assertThatThrownBy(() -> FabricLedgerService.resolveFile(dir.toString())).isInstanceOf(IOException.class);
+        Path empty = Files.createDirectory(dir.resolve("empty"));
+        assertThatThrownBy(() -> FabricLedgerService.resolveFile(empty.toString())).isInstanceOf(IOException.class);
+    }
+}

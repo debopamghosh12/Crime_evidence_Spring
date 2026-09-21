@@ -313,10 +313,10 @@ and the difference is listed here. Verification evidence: `docs/TEST_CHECKLIST.m
   L2 (Phase 5). Coverage instead: unit tests, `@WebMvcTest` slice with the real security chain, and the
   live run recorded in the checklist. See D-012.
 
-## 11. As built (Phase 2): evidence management, 2026-09-23
+## 11. As built (Phase 2): evidence management, 2026-09-22
 
-Spring-side Phase 2 is implemented and verified live against the **in-memory reference ledger**; the
-Fabric chaincode and `FabricLedgerService` await owner approval of `docs/CHAINCODE_DESIGN.md`.
+Phase 2 is implemented and verified live against BOTH the in-memory reference ledger and the real Fabric ledger
+(section 12 below); the chaincode design was approved 2026-09-22.
 
 **New packages/classes.** `domain/` (EvidenceStatus, EvidenceType, VerificationStatus, Cid, EvidenceMetadata);
 `ledger/` (final `LedgerService`, `LedgerActor`, `LedgerNewEvidence`, `LedgerEvidenceRecord`,
@@ -346,9 +346,22 @@ Fabric chaincode and `FabricLedgerService` await owner approval of `docs/CHAINCO
 `blockevidence.upload.allowed-content-types`.
 
 **Known limitations (all also in the feature write-ups):**
-1. Nothing here is on Fabric yet: with the default profile every evidence call answers 501.
+1. (Resolved 2026-09-22) The default profile now uses the real Fabric ledger; without a configured identity evidence calls answer 503.
 2. IPFS content is not private (D-020); a default Kubo node joins the public network. Dev uses `--offline`.
 3. Read access is not restricted by case (A5 unscheduled): any authenticated role reads any evidence.
 4. The upload type check trusts the client-declared content type (D-026).
 5. Retry on Fabric MVCC conflicts (F5) is not built; only compensation is (D-024).
 6. Metadata documents may contain descriptive text readable by anyone with the CID (F2 not built).
+
+## 12. As built (Phase 2, ledger stage): chaincode and FabricLedgerService, 2026-09-22
+
+- **`chaincode/evidence/`** (Go, `fabric-contract-api-go` 1.2.2), deployed to channel `crimechannel` as `evidence` v1.1 seq 2 on the revived
+  Fabric 2.5.15 network (2 orgs, LevelDB, both must endorse). See `docs/CHAINCODE_DESIGN.md` (section 10 as-built), `docs/FABRIC_RUNBOOK.md`.
+- **`ledger/FabricLedgerService`** is now the real implementation (Fabric Gateway 1.12.1, gRPC 1.83.1, TLS to `localhost:7051`), with
+  `ledger/FabricErrors` and an extended `config/FabricProperties` (identity by file path). It remains the only class importing Fabric types (C-01).
+  The `LedgerNotImplementedException` stub exception was removed.
+- **Layout addition:** top-level `chaincode/` (Go module, `scripts/`), `scripts/live/`, `src/test/resources/fabric/` (real peer output as fixtures).
+- **New dependencies (approved G6, logged D-030):** `fabric-gateway`, `grpc-netty-shaded` (Java); Go modules for the chaincode.
+- **Endpoint surface:** unchanged from section 11.
+- **Limitations added:** C-08 (role trusted from the backend until A2); orphaned IPFS pins are possible during a ledger outage (D-037);
+  ledger test data is permanent; one peer connection (no failover to Org2's peer).

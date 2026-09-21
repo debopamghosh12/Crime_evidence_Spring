@@ -38,3 +38,6 @@ Automated: `EvidenceServiceTest` (`ledgerInformationSurvivesAnIpfsOutage`, `getW
 ## Known limits
 - Any authenticated user can read any evidence (A5 unscheduled). ADMIN and AUDITOR can read.
 - Each GET makes one extra IPFS read for the metadata document (no caching).
+
+## Update 2026-09-22: on real Fabric
+Retrieval is now served by `GetEvidence` (one peer, not ordered) and CID lookup by the chaincode's composite-key index (`FindByCid`); LevelDB has no rich queries, so that index is the only way. Lookup by file CID and by metadata CID both returned the record on Fabric, and an unknown CID/id answered 404. With IPFS down the ledger fields are still returned (unchanged).

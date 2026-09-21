@@ -36,3 +36,8 @@ build/
 .env
 *.env
 application-local.yml
+
+### Chaincode build artifacts (regenerable: go mod vendor / go build) ###
+chaincode/evidence/vendor/
+chaincode/**/*.exe
+*.tar.gz

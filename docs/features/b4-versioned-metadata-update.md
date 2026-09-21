@@ -40,4 +40,7 @@ pin cleaned up. (`InMemoryLedgerServiceTest`: file fields untouched by an update
 
 ## Known limits
 - Only three fields are editable (description, location, notes). Physical-evidence fields (B7) are not modelled.
-- Not yet on Fabric.
+- ~~Not yet on Fabric.~~ (Superseded 2026-09-22, see the update below.)
+
+## Update 2026-09-22: on real Fabric
+Versions are the peer's own history (`GetHistoryForKey`), so old versions cost no extra storage. Concurrency was tested on Fabric: 4 simultaneous updates with the same `expectedVersion`, 3 rounds, gave exactly one `200` and three `409 VERSION_CONFLICT` every time, with a two-entry history (P2-F.7 F2). The chaincode also refused a stale version by itself when driven directly (P2-F.4).

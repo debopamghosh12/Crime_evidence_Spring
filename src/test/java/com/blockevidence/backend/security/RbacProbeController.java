@@ -1,6 +1,6 @@
 package com.blockevidence.backend.security;
 
-import com.blockevidence.backend.ledger.LedgerNotImplementedException;
+import com.blockevidence.backend.exception.FeatureNotImplementedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -39,6 +39,6 @@ public class RbacProbeController {
 
     @GetMapping("/not-implemented")
     public String stub() {
-        throw new LedgerNotImplementedException("createEvidence");
+        throw new FeatureNotImplementedException("This feature is not implemented yet");
     }
 }

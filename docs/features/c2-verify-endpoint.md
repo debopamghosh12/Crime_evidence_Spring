@@ -50,4 +50,7 @@ unreachable node throws, unknown id 404 (all using `FakeIpfsClient.corrupt()/los
 ## Known limits
 - Verifies the two artifacts from the ledger's *current* record; verifying an old version is not offered.
 - Full-file download per call, so it is deliberately opt-in on GET. There is no scheduled sweep (C5, P2 stretch).
-- The expected hash comes from the reference ledger in this run; the Fabric-anchored version is the point of G2.
+- (Superseded: the expected hash is now anchored in Fabric, see the update below.)
+
+## Update 2026-09-22: on real Fabric
+Re-run through real Fabric: the expected hash is now anchored in the ledger, not in process memory. On-disk corruption of the file's block -> `TAMPERED` (expected `4c41e0f5...` vs actual `020f516e...`, final run), deleted block -> `NOT_FOUND`, node stopped -> `503`, untouched -> `VERIFIED` (Appendix P2-F-D). Note that with the reference ledger the 'expected' side could in principle be tampered with at will; with Fabric it is what both orgs endorsed.

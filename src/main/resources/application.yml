@@ -46,4 +46,13 @@ blockevidence:
     lookup-timeout: ${IPFS_LOOKUP_TIMEOUT:10s}
   fabric:
     channel: ${FABRIC_CHANNEL:crimechannel}
-    chaincode: ${FABRIC_CHAINCODE:basic}
+    chaincode: ${FABRIC_CHAINCODE:evidence}
+    peer-endpoint: ${FABRIC_PEER_ENDPOINT:localhost:7051}
+    peer-host-alias: ${FABRIC_PEER_HOST_ALIAS:peer0.org1.example.com}
+    msp-id: ${FABRIC_MSP_ID:Org1MSP}
+    # Identity material is referenced by PATH and never stored in the repo (C-07). All three are needed for the
+    # ledger to be "configured"; without them the app starts and ledger calls answer 503. Each cert/key path may
+    # be a file or a directory holding exactly one file (Fabric MSP: signcerts/, keystore/).
+    tls-cert-path: ${FABRIC_TLS_CERT_PATH:}
+    cert-path: ${FABRIC_CERT_PATH:}
+    key-path: ${FABRIC_KEY_PATH:}

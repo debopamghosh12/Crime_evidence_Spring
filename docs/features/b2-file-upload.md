@@ -42,3 +42,6 @@ idempotent unpin, malformed CID never sent, probe timeouts), `EvidenceServiceTes
 - Not measured: heap use for a 50 MB upload under concurrent load (only a single 20 MB upload was timed).
 - No virus/content scanning or magic-byte sniffing.
 - The stored file is unencrypted and, on a networked node, publicly retrievable (F2 / D-020).
+
+## Update 2026-09-22: on real Fabric
+No change to storage. Through Fabric the upload path was re-run unchanged: 20 MB registered and verified, 60 MB rejected 413, disallowed type 415 (P2-F.6).

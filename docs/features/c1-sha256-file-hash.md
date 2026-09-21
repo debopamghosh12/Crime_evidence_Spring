@@ -36,4 +36,7 @@ ledger fileSha256        : 3511f39d2a7814023579467d7097a51ebf2b002c5cc1a4bc0aeaf
 
 ## Known limits
 - SHA-256 only; no algorithm agility field on the ledger record.
-- Not yet on Fabric (the hash is written by the in-memory ledger in this run).
+- Not yet on Fabric (in this early run; see the update below).
+
+## Update 2026-09-22: on real Fabric
+The hash is now written to the Fabric world state (`fileSha256`, immutable: no chaincode function assigns it after creation, and a test proves updates copy it through unchanged). Local hash == ledger hash was re-verified on Fabric for the small file and the 20 MB file (P2-F.6).

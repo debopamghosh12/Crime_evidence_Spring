@@ -3,15 +3,15 @@
 Run before calling anything "done". Each check has the command and the **actual output** from the run
 that verified it. If a feature has no check here, add one first, then run it.
 
-Last full run: **2026-09-23, Phase 1 + Phase 2 (B1-B5, C1-C3; G2 is design-only)**. Unit/slice tests:
-**117 passed, 0 failed.** Phase 2 live checks passed against the **in-memory reference ledger**, NOT Fabric
-(section P2). Phase 1 live checks (sections 2-8 below) were run 2026-09-22 and are unchanged.
+Last full run: **2026-09-22, Phase 1 + Phase 2 (B1-B5, C1-C3, G2)**. **130 Java tests + 22 Go chaincode tests passed, 0 failed.**
+Phase 2 live checks passed against the in-memory reference ledger (section P2) AND through the **real Fabric network** (section P2-F).
+Phase 1 live checks (sections 2-8 below) were run 2026-09-22 and are unchanged.
 
 Secrets are never written in this file: commands use environment-variable references.
 
-## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-23
+## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
-**Read this first.** Every live result below ran against `InMemoryLedgerService` (profile `memory-ledger`),
+**Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),
 real PostgreSQL 16, and a real Kubo 0.43 node in `--offline` mode. It is **not** a Fabric run and proves
 nothing about the chaincode. The app logged `*** memory-ledger profile active: ... NOT a blockchain, NOT
 tamper-proof ***` at startup. The Fabric run (same checks through `FabricLedgerService`) is a to-do that
@@ -84,7 +84,7 @@ were blank and the block deletion silently did nothing (NOT_FOUND showed `VERIFI
 | Hostile client filenames reduced to a bare name (`..\\..\\x.txt`, `/etc/passwd`, CR/LF) | passed |
 | `LedgerService` has no method named delete/remove/purge/erase/destroy | passed |
 
-**P2.3b Constraint and boundary greps, re-run on the Phase 2 code (2026-09-23).** Commands and actual results:
+**P2.3b Constraint and boundary greps, re-run on the Phase 2 code (2026-09-22).** Commands and actual results:
 
 | Rule | Command | Actual |
 |---|---|---|
@@ -101,12 +101,122 @@ were blank and the block deletion silently did nothing (NOT_FOUND showed `VERIFI
 
 ### P2.4 Not covered yet (known gaps)
 
-- **Everything on Fabric.** The chaincode, `FabricLedgerService`, endorsement, MVCC conflicts, the peer's
-  history DB, real transaction ids/timestamps. Blocked on approval of `docs/CHAINCODE_DESIGN.md`.
-- The default profile (Fabric stub) answers every evidence call with `501 NOT_IMPLEMENTED`; not run live in Phase 2.
+- (Resolved 2026-09-22) Fabric: see section P2-F.
 - Memory: a 20 MB upload was tested; streaming/heap behaviour for a 50 MB upload under concurrent load was not.
 - No automated test proves the block-corruption scenario (it needs a real Kubo node and disk access); the
   unit-level equivalent uses `FakeIpfsClient.corrupt()`.
+
+## P2-F. Phase 2 through REAL Fabric (chaincode `evidence` v1.1) — run 2026-09-22
+
+Everything here ran against the real network (Fabric 2.5.15, 2 orgs, both endorsing), the real Go chaincode on the peers, real PostgreSQL,
+and a real Kubo node in `--offline` mode. Verbatim logs are in the appendices at the end of this file.
+
+### P2-F.1 Network revival (G7, option a): no recreation
+
+| Step | Actual |
+|---|---|
+| State before | 6 Fabric containers `Exited (255) 4 months ago`; `basic` v1.0 seq 1 committed |
+| `docker start ca_orderer ca_org1 ca_org2`, `orderer`, then both peers | all `Up`; peers logged `SERVICE_UNAVAILABLE` from the orderer for ~2 s, then `Pulling next blocks ... nextBlock=48` |
+| `peer channel list` / `getinfo` | `crimechannel`, `"height":48` |
+| `peer lifecycle chaincode querycommitted` | `Name: basic, Version: 1.0, Sequence: 1` |
+
+### P2-F.2 Chaincode unit tests: `cd chaincode/evidence && go test -v ./...`
+
+22 passed, 0 failed (list in Appendix P2-F-A). They mirror `InMemoryLedgerServiceTest` and additionally prove: a rejected call changes
+nothing (Fabric's rollback), the history is ordered even if the peer iterates newest-first, every write emits exactly one event with only
+identifiers, `DelState`/`PurgePrivateData` are never called (syntax-tree scan, not text grep), the exported function set is exactly the
+approved nine, the JSON keys are the contract with Java, and every `omitempty` field is `optional` in the schema.
+
+### P2-F.3 Deployment (`chaincode/scripts/deploy_cc.sh`, `VER=1.1 SEQ=2`)
+
+| Step | Actual (Appendix P2-F-B) |
+|---|---|
+| Package + install on Org1 / Org2 | `Installed remotely: response:<status:200 ...>` on both; package id `evidence_1.1:4e6e0c43...ed84` |
+| Approve for Org1 / Org2 | each `committed with status (VALID)` |
+| Commit readiness | `"Org1MSP": true, "Org2MSP": true` |
+| Commit | `committed with status (VALID)` at `localhost:9051` and `localhost:7051` |
+| Committed definitions | `Name: basic, Version: 1.0, Sequence: 1` and `Name: evidence, Version: 1.1, Sequence: 2` |
+
+### P2-F.4 The real chaincode driven directly through the `peer` CLI (bypassing Spring; every write endorsed by BOTH orgs)
+
+Actual output in Appendix P2-F-C. This is what proves the chaincode's own second-line checks.
+
+| Call | Expected | Actual |
+|---|---|---|
+| `CreateEvidence` DIGITAL as COLLECTOR | committed | `status:200`, then `GetEvidence` returns the record (`version 1`, `COLLECTED`) |
+| `CreateEvidence` as JUDGE / as ADMIN | refused by the chaincode | `FORBIDDEN_ROLE: Role JUDGE may not create evidence` / `Role ADMIN may not create evidence` |
+| Create the same id again | refused | `EVIDENCE_EXISTS: Evidence EV-... already exists` |
+| `UpdateEvidence` expectedVersion 7 (record at 1) | refused | `VERSION_CONFLICT: Expected version 7 but the record is at version 1` |
+| `UpdateEvidence` v1 -> v2 | committed | `status:200` |
+| `UpdateStatus` COLLECTED -> ARCHIVED (skips two) | refused | `INVALID_STATE: Status cannot move from COLLECTED to ARCHIVED` |
+| `UpdateStatus` to DISPOSED | refused | `INVALID_ARGUMENT: DISPOSED is only reachable through an approved disposal` |
+| `UpdateStatus` COLLECTED -> PROCESSING | committed | `status:200` |
+| Invoke `DeleteEvidence` | does not exist | `Function DeleteEvidence not found in contract EvidenceContract` |
+| `RequestDisposal` by COLLECTOR | committed | `status:200` |
+| `ApproveDisposal` by COLLECTOR | refused | `FORBIDDEN_ROLE: Role COLLECTOR may not approve disposal` |
+| `ApproveDisposal` by JUDGE, stale version 3 (record at 4) | refused | `VERSION_CONFLICT: Expected version 3 but the record is at version 4` |
+| `ApproveDisposal` by JUDGE, version 4 | committed | `status:200` |
+| `UpdateEvidence` after DISPOSED | refused | `INVALID_STATE: Evidence is DISPOSED and can no longer change` |
+| `GetEvidence` after disposal | record still there | `"status":"DISPOSED","version":5` |
+| `FindByCid` file CID / original metadata CID | the id | both `["EV-c7800f6a-..."]` (old CID still indexed after the update) |
+| `GetHistory` | 5 versions, real tx ids, peer timestamps | `v1 CREATED ... v5 DISPOSAL_APPROVED`, each with a distinct 64-hex `tx=` and a nanosecond timestamp |
+
+### P2-F.5 Java: `./mvnw test`
+
+`Tests run: 130, Failures: 0, Errors: 0, Skipped: 0`. New: `FabricLedgerServiceTest` (15) parses REAL peer output captured to
+`src/test/resources/fabric/` with a non-lenient JSON mapper, translates the two real peer error messages, checks all six chaincode codes
+map to their `LedgerErrorCode`, MVCC and connectivity mapping, the no-detail-leak rule, "not configured" and "cannot connect" behaviour,
+and file-or-directory identity paths.
+
+### P2-F.6 The FULL Phase 2 checklist through Spring -> real Fabric
+
+`scripts/live/live_phase2.sh` (the same script that produced Appendix P2-A) run against the default profile. Health first:
+`ledger: {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}`.
+
+**Comparison method:** normalise ids, hashes, CIDs, timestamps and timings out of both logs and `diff` them.
+
+```
+=== normalised diff: in-memory run vs REAL FABRIC run (after the fix) ===
+170c170
+<    ledger : {'details': {'detail': 'IN-MEMORY reference ledger (dev/test only). NOT a blockchain, NOT tamper-proof.'}, 'status': 'UP'}
+---
+>    ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+=== end
+```
+The only difference between the two ledgers across ~170 lines is the sentence naming the ledger. So every row of table P2.2 (register,
+forged collector ignored, hash equality, by id / file CID / metadata CID, VERIFIED, **on-disk block corruption -> TAMPERED**, **deleted block
+-> NOT_FOUND**, versions, stale update 409, blank reason 400, JUDGE update 403, history, disposal request/approve/stale/frozen,
+DELETE 405, role matrix, upload limits, IPFS outage 503) holds through real Fabric. Verbatim: Appendix P2-F-D.
+
+An earlier Fabric run showed ONE more difference (defect D-034: `... can no longer change ABORTED: failed to endorse transaction ...`);
+it was fixed and the run repeated; the diff above is the repeated run.
+
+### P2-F.7 Checks only a real ledger can show (`scripts/live/live_fabric_extra.sh`, Appendix P2-F-E)
+
+| ID | Check | Expected | Actual |
+|---|---|---|---|
+| F1 | txId from `GET /history` looked up on the peers with `qscc GetTransactionByID` | exists | found: the transaction contains `CreateEvidence`, the key `EV~EV-74d325e1-...` and `Org1MSP`; a made-up txId -> `Failed to get transaction with id 0000...` |
+| F2 | 4 concurrent `PUT`s, same record, same `expectedVersion`, 3 rounds | exactly one wins | every round: `1 200  3 409`, losers' error `['VERSION_CONFLICT']`, history length 2, versions `[1, 2]` |
+| F3 | Stop `peer0.org1` | 503, health DOWN, no crash | GET -> `503 LEDGER_UNAVAILABLE`; register -> `503`; health `DOWN` (`The ledger network is not reachable`); `/api/auth/me` still `200` |
+| F3 | Start the peer again | recovers by itself | GET -> `200` after ~4 s, no application restart |
+| F4 | Restart the application, read an earlier record | still there | `status COLLECTED, version 1, createdAt 2026-09-21T20:02:52.437724Z`; verify -> `VERIFIED` |
+
+Ledger height after everything: 93 (48 at the start). Committed: `basic` 1.0/1 and `evidence` 1.1/2.
+
+### P2-F.8 Defects found by running on real Fabric (not by any earlier test)
+
+1. **v1.0 chaincode could not read physical items** (schema validation, D-032). Found by the first live query. Fixed, tested, redeployed as v1.1.
+2. **Error message ran into the gateway's next fragment** (D-034). Found by diffing the two full runs. Fixed, tested with the real shape.
+3. Harness-only (mine): `peer chaincode invoke` without `--waitForEvent` does not wait for the block; WSL log redirection scrambled output;
+   Git Bash path rewriting. Documented in the runbook.
+
+### P2-F.9 Not covered (known gaps; consolidated, report-facing list in docs/KNOWN_GAPS.md)
+
+- **C-08:** the chaincode trusts the role passed by the backend. No test can show otherwise; A2 (Phase 3) is the fix.
+- One org failing to endorse, orderer outage, more than one peer connection / failover to Org2's peer, load, certificate rotation.
+- Chaincode events are emitted and tested with a fake stub, but nothing consumes them yet (G3, Phase 4).
+- Orphaned IPFS pins after a failed register during a ledger outage are expected (D-037); not measured.
+- The Fabric run used a single application identity for every user (`User1@org1`); per-user identities are A2.
 
 ## 0. Environment for live checks
 
@@ -226,7 +336,7 @@ Command: `./mvnw test -Dtest=SecurityAndErrorFormatTest`. Uses a test-only contr
 
 ## 7. G1 / F1: stubs and boundaries
 
-> **Superseded in Phase 2 (2026-09-23).** The IPFS client is no longer a stub (see P2 and
+> **Superseded in Phase 2 (2026-09-22).** The IPFS client is no longer a stub (see P2 and
 > `docs/features/b2-file-upload.md`), and `LedgerService` was finalised (DECISIONS D-016), so the test names
 > below (`pinFetchAndUnpinAreStubsInPhase1`, the 7-operation stub check) no longer exist. The C-01/C-05/C-07
 > boundary checks still apply and were re-run on the Phase 2 code (see P2.3). Kept for history.
@@ -247,7 +357,7 @@ Command: `./mvnw test -Dtest=SecurityAndErrorFormatTest`. Uses a test-only contr
 - No automated regression for the timezone bug (`docs/bugs/jvm-timezone-postgres.md`).
 - Purging of expired refresh tokens and per-request "still enabled" check for access tokens do not exist.
 
-## Appendix P2-A. Final live run, verbatim (2026-09-23, memory-ledger profile)
+## Appendix P2-A. Final live run, verbatim (2026-09-22, memory-ledger profile)
 
 Script: run against `http://localhost:8080`; tokens omitted from the output by design.
 
@@ -423,4 +533,343 @@ removed-block
    overall: UP
    ledger : {'details': {'detail': 'IN-MEMORY reference ledger (dev/test only). NOT a blockchain, NOT tamper-proof.'}, 'status': 'UP'}
    ipfs   : {'status': 'UP'}
+```
+
+## Appendix P2-F-A. `go test -v ./...` in chaincode/evidence (verbatim)
+
+```
+--- PASS: TestCreateStoresVersionOneCollectedWithLedgerTimestampAndActor (0.00s)
+--- PASS: TestDuplicateIdIsRejected (0.00s)
+--- PASS: TestOnlyCollectorAndAnalystMayCreate (0.00s)
+--- PASS: TestDigitalNeedsFileFieldsAndPhysicalForbidsThem (0.00s)
+--- PASS: TestMalformedInputsAreRejected (0.00s)
+--- PASS: TestAnOrganisationOutsideTheAllowListCannotWrite (0.00s)
+--- PASS: TestUpdateBumpsVersionKeepsFileFieldsAndNeedsAReason (0.00s)
+--- PASS: TestStaleExpectedVersionIsRejected (0.00s)
+--- PASS: TestUpdateWithUnchangedCidOrUnknownIdOrWrongRoleFails (0.00s)
+--- PASS: TestStatusMovesForwardOnlyAndNeverToDisposed (0.00s)
+--- PASS: TestDisposalNeedsRequestThenJudgeApprovalThenFreezesTheRecordButKeepsIt (0.00s)
+--- PASS: TestRejectedDisposalLeavesTheRecordUsable (0.00s)
+--- PASS: TestTheApproverCannotBeTheRequester (0.00s)
+--- PASS: TestHistoryIsOldestFirstWithDistinctTxIdsEvenIfThePeerReturnsNewestFirst (0.00s)
+--- PASS: TestCidIndexFindsFileAndEveryMetadataCidAndSharedFiles (0.00s)
+--- PASS: TestARejectedCallChangesNothing (0.00s)
+--- PASS: TestEveryWriteEmitsOneEventWithOnlyIdentifiers (0.00s)
+--- PASS: TestNothingEverDeletes (0.00s)
+--- PASS: TestTheExportedFunctionSetIsExactlyTheApprovedOne (0.00s)
+--- PASS: TestRecordJsonKeysAreTheContractWithTheJavaSide (0.00s)
+--- PASS: TestContractMetadataGenerates (0.02s)
+--- PASS: TestOmitemptyFieldsAreAlsoOptionalInTheSchema (0.00s)
+PASS
+ok  	blockevidence/evidence	0.367s
+```
+
+## Appendix P2-F-B. Deployment of `evidence` v1.1 seq 2 (filtered to the decisive lines)
+
+```
+### copy source to a WSL-local dir (no spaces in the path) and vendor dependencies
+### package
+package id: evidence_1.1:4e6e0c43f67cc503a4b6dc92d5b4eee554388f21177c63b269a05e982707ed84
+### install on Org1 (the peer builds the chaincode image; this takes a while)
+2026-09-21 19:48:18.935 UTC 0001 INFO [cli.lifecycle.chaincode] submitInstallProposal -> Installed remotely: response:<status:200 payload:"\nMevidence_1.1:4e6e0c43f67cc503a4b6dc92d5b4eee554388f21177c63b269a05e982707ed84\022\014evidence_1.1" > 
+2026-09-21 19:48:18.936 UTC 0002 INFO [cli.lifecycle.chaincode] submitInstallProposal -> Chaincode code package identifier: evidence_1.1:4e6e0c43f67cc503a4b6dc92d5b4eee554388f21177c63b269a05e982707ed84
+### install on Org2
+2026-09-21 19:48:46.342 UTC 0001 INFO [cli.lifecycle.chaincode] submitInstallProposal -> Installed remotely: response:<status:200 payload:"\nMevidence_1.1:4e6e0c43f67cc503a4b6dc92d5b4eee554388f21177c63b269a05e982707ed84\022\014evidence_1.1" > 
+2026-09-21 19:48:46.342 UTC 0002 INFO [cli.lifecycle.chaincode] submitInstallProposal -> Chaincode code package identifier: evidence_1.1:4e6e0c43f67cc503a4b6dc92d5b4eee554388f21177c63b269a05e982707ed84
+### approve for Org1
+2026-09-21 19:48:48.499 UTC 0001 INFO [chaincodeCmd] ClientWait -> txid [8e82a7cc8e34b6cd7663945024bf52005c9b7bc80e9edd91e438ca4a5ffb99eb] committed with status (VALID) at localhost:7051
+### approve for Org2
+2026-09-21 19:48:51.298 UTC 0001 INFO [chaincodeCmd] ClientWait -> txid [3932067dacae5e0478c127d44512a25767181cfe13f7a5350d4eb927f8bfc3ea] committed with status (VALID) at localhost:9051
+### commit readiness
+	"approvals": {
+		"Org1MSP": true,
+		"Org2MSP": true
+### commit
+2026-09-21 19:48:54.309 UTC 0001 INFO [chaincodeCmd] ClientWait -> txid [b0ac330d97f50547df91385b412a1e1135c53c8801b3acecba116d8a1a353aa7] committed with status (VALID) at localhost:9051
+2026-09-21 19:48:54.316 UTC 0002 INFO [chaincodeCmd] ClientWait -> txid [b0ac330d97f50547df91385b412a1e1135c53c8801b3acecba116d8a1a353aa7] committed with status (VALID) at localhost:7051
+### committed definitions
+Name: basic, Version: 1.0, Sequence: 1, Endorsement Plugin: escc, Validation Plugin: vscc
+Name: evidence, Version: 1.1, Sequence: 2, Endorsement Plugin: escc, Validation Plugin: vscc
+```
+
+## Appendix P2-F-C. The real chaincode driven directly through the peer CLI (verbatim, `chaincode/scripts/cc_direct.sh`)
+
+```
+evidence id under test: EV-c7800f6a-b95e-4325-8799-4f9c2c702716
+
+### CreateEvidence DIGITAL as COLLECTOR (both orgs endorse)
+status:200 payload:"{"
+
+### GetEvidence
+{"docType":"evidence","evidenceId":"EV-c7800f6a-b95e-4325-8799-4f9c2c702716","caseId":"FAB-DIRECT","evidenceType":"DIGITAL","status":"COLLECTED","version":1,"metadataCid":"bjit6flcpm642ncnjbsogjfnkaot3tynm4knajwegztc6mtl345ww","metadataSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileCid":"biisupj3ssx3x3fqybxrrnybhgn47zhc37ansadg5frv6ncnvz4xp","fileSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileSize":1234,"createdBy":"11111111-1111-4111-8111-111111111111","createdByRole":"COLLECTOR","createdAt":"2026-09-21T19:49:01.247654366Z","updatedBy":"11111111-1111-4111-8111-111111111111","updatedByRole":"COLLECTOR","updatedAt":"2026-09-21T
+
+### CreateEvidence as JUDGE (role table: must be refused BY THE CHAINCODE)
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: Role JUDGE may not create evidence" 
+
+### CreateEvidence as ADMIN (Admin never writes evidence)
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: Role ADMIN may not create evidence" 
+
+### Create the same id again
+Error: endorsement failure during invoke. response: status:500 message:"EVIDENCE_EXISTS: Evidence EV-c7800f6a-b95e-4325-8799-4f9c2c702716 already exists" 
+
+### UpdateEvidence with a STALE expectedVersion (record is at 1, caller says 7)
+Error: endorsement failure during invoke. response: status:500 message:"VERSION_CONFLICT: Expected version 7 but the record is at version 1" 
+
+### UpdateEvidence v1 -> v2 (metadata pointer only)
+status:200 payload:"{"
+
+### UpdateStatus straight to ARCHIVED (skips PROCESSING and ANALYZED)
+Error: endorsement failure during invoke. response: status:500 message:"INVALID_STATE: Status cannot move from COLLECTED to ARCHIVED" 
+
+### UpdateStatus to DISPOSED (only an approved disposal may do that)
+Error: endorsement failure during invoke. response: status:500 message:"INVALID_ARGUMENT: DISPOSED is only reachable through an approved disposal" 
+
+### UpdateStatus COLLECTED -> PROCESSING (legal)
+status:200 payload:"{"
+
+### There is no delete: invoking DeleteEvidence
+Error: endorsement failure during invoke. response: status:500 message:"Function DeleteEvidence not found in contract EvidenceContract" 
+
+### RequestDisposal by COLLECTOR
+status:200 payload:"{"
+
+### ApproveDisposal by COLLECTOR (refused: only a JUDGE)
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: Role COLLECTOR may not approve disposal" 
+
+### ApproveDisposal by JUDGE with a stale version (3, record at 4)
+Error: endorsement failure during invoke. response: status:500 message:"VERSION_CONFLICT: Expected version 3 but the record is at version 4" 
+
+### ApproveDisposal by JUDGE with the reviewed version
+status:200 payload:"{"
+
+### UpdateEvidence after DISPOSED (record is frozen)
+Error: endorsement failure during invoke. response: status:500 message:"INVALID_STATE: Evidence is DISPOSED and can no longer change" 
+
+### GetEvidence after disposal (record still on the ledger)
+{"docType":"evidence","evidenceId":"EV-c7800f6a-b95e-4325-8799-4f9c2c702716","caseId":"FAB-DIRECT","evidenceType":"DIGITAL","status":"DISPOSED","version":5,"metadataCid":"bpttuuo4nxgcebiysl62kuqpjblrcka2amwwdl6jn3dhgwtigldjy","metadataSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileCid":"biisupj3ssx3x3fqybxrrnybhgn47zhc37ansadg5frv6ncnvz4xp","fileSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileSize":1234,"createdBy":"11111111-1111-4111-8111-111111111111","createdByRole":"COLLECTOR","createdAt":"2026-09-21T19:49:01.247654366Z","updatedBy":"44444444-4444-4444-8444-444444444444","updatedByRole":"JUDGE","updatedAt":"2026-09-21T19:49
+
+### FindByCid (the FILE cid)
+["EV-c7800f6a-b95e-4325-8799-4f9c2c702716"]
+
+### FindByCid (the ORIGINAL metadata cid, still indexed after the update)
+["EV-c7800f6a-b95e-4325-8799-4f9c2c702716"]
+
+### GetHistory (from the peer's history index): version, action, txId, ledger timestamp
+   v1 CREATED             tx=13facf4fb31d7af4..  at=2026-09-21T19:49:01.247654366Z  by=COLLECTOR  metadataCid=bjit6flcpm..
+   v2 METADATA_UPDATED    tx=56641c0f38ea55e6..  at=2026-09-21T19:49:03.905845537Z  by=COLLECTOR  metadataCid=bpttuuo4nx..
+   v3 STATUS_CHANGED      tx=c844fdd3476de47d..  at=2026-09-21T19:49:06.297373973Z  by=COLLECTOR  metadataCid=bpttuuo4nx..
+   v4 DISPOSAL_REQUESTED  tx=195652bdc0b962c1..  at=2026-09-21T19:49:08.577189718Z  by=COLLECTOR  metadataCid=bpttuuo4nx..
+   v5 DISPOSAL_APPROVED   tx=d7fa98fe8732afe3..  at=2026-09-21T19:49:10.941533841Z  by=JUDGE  metadataCid=bpttuuo4nx..
+```
+
+## Appendix P2-F-D. Full Phase 2 checklist through Spring -> real Fabric (verbatim, `scripts/live/live_phase2.sh`)
+
+```
+collector user id (from /api/auth/me): f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+
+### B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)
+HTTP 201
+   evidenceId                 EV-4c248518-89a1-4cd1-abc6-4979c8a47b12
+   status                     COLLECTED
+   version                    1
+   createdBy                  f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   currentCustodian           f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   fileCid                    bafkreicmihqplyh6e7iywazjmpgl3nazksj7phkxro56ckvk2rc7ahx4cm
+   fileSha256                 4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   fileSize                   41
+   metadataAvailable          True
+   metadata.collectorId       f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   verification.status        NOT_CHECKED
+   -> local sha256 of the file : 4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   -> ledger fileSha256        : 4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   -> createdBy == collector id from JWT? YES
+   -> stored bytes fetched from IPFS by the file CID == original? YES
+
+### B1 register PHYSICAL evidence (no file)
+HTTP 201
+   evidenceId                 EV-58ae85cb-b911-4a20-9357-a68cc891fc6b
+   evidenceType               PHYSICAL
+   fileCid                    None
+   fileSha256                 None
+   status                     COLLECTED
+   createdByRole              None
+
+### B3 retrieve by id, by file CID, by metadata CID
+200 HTTP by id (AUDITOR)
+   status                     COLLECTED
+   version                    1
+   metadata.description       Suspect phone image
+   verification.status        NOT_CHECKED
+200 HTTP by file CID
+   ids: ['EV-4c248518-89a1-4cd1-abc6-4979c8a47b12']
+200 HTTP by metadata CID
+404 HTTP by unknown CID
+   error                      NOT_FOUND
+404 HTTP unknown id
+   error                      NOT_FOUND
+
+### C2 verify untouched evidence
+200 HTTP
+   status                     VERIFIED
+   ledgerVersion              1
+   file.result                VERIFIED
+   file.expectedSha256        4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   file.actualSha256          4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   metadata.result            VERIFIED
+
+### C2 DELIBERATE CORRUPTION: change one word inside the file's block on the IPFS node's disk, then restart the node
+   -> block file on the node: /data/ipfs/blocks/YE/CIQEYQPA6XQP4J6RRMBSSY6MXW2BSVET66OVPC534EVKVVCF6APPYEY.data
+   -> before: LIVE-EVIDENCE-1790020887-original-content
+   -> after : LIVE-EVIDENCE-1790020887-0RIGINAL-content
+   -> IPFS still answers a cat for the same CID (content-addressing did NOT catch it):
+   ->    cat -> LIVE-EVIDENCE-1790020887-0RIGINAL-content
+200 HTTP verify
+   status                     TAMPERED
+   file.result                TAMPERED
+   file.expectedSha256        4c41e0f5e0fe27d18b032963ccbdb4195493f79d578bbbe12aaad445f01efc13
+   file.actualSha256          020f516ec860d54a4d90501a2a500397d8083df49a7d0127bd3ca38741bf644b
+   metadata.result            VERIFIED
+200 HTTP GET ?verify=true
+   verification.status        TAMPERED
+   status                     COLLECTED
+
+### C2 NOT_FOUND: register another item, delete its file block from the node's disk, restart
+removed-block
+200 HTTP verify (180 ms)
+   status                     NOT_FOUND
+   file.result                NOT_FOUND
+   file.actualSha256          None
+   metadata.result            VERIFIED
+
+### B4 versioned update (ANALYST), old version stays readable, stale update rejected
+200 HTTP update v1->v2
+   version                    2
+   lastAction                 METADATA_UPDATED
+   lastReason                 Location corrected after audit
+   metadata.location          Locker 9
+   metadata.description       Wallet
+   metadata.metadataVersion   2
+   metadata.previousMetadataCid bafkreigrq3k6igw366kvqkmygt4dryc62zreulorefutollpw54g3zrmye
+200 HTTP GET version 1 (old)
+   version                    1
+   metadata.location          Desk 2
+200 HTTP GET version 2
+   version                    2
+   metadata.location          Locker 9
+409 HTTP stale update (expectedVersion=1, record is at 2)
+   error                      VERSION_CONFLICT
+   message                    Expected version 1 but the record is at version 2
+400 HTTP blank reason
+   error                      VALIDATION_FAILED
+403 HTTP JUDGE update
+   error                      ACCESS_DENIED
+
+### C3 ledger history (tx ids and ledger timestamps)
+200 HTTP
+   v1  CREATED           tx=434786ed54822601..  at=2026-09-21T20:02:04.505840100Z  by=COLLECTOR reason=''
+   v2  METADATA_UPDATED  tx=6d2e803922a24340..  at=2026-09-21T20:02:06.896367500Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+
+### B5 disposal: request (PROSECUTOR) -> COLLECTOR cannot approve -> stale approval rejected -> JUDGE approves
+200 HTTP request disposal
+   status                     COLLECTED
+   version                    2
+   disposal.state             PENDING
+   disposal.reason            Case closed by order 42/2026
+   lastAction                 DISPOSAL_REQUESTED
+403 HTTP COLLECTOR approve
+   error                      ACCESS_DENIED
+409 HTTP JUDGE approve with stale version
+   error                      VERSION_CONFLICT
+200 HTTP JUDGE approve
+   status                     DISPOSED
+   version                    3
+   disposal.state             NONE
+   lastAction                 DISPOSAL_APPROVED
+   lastReason                 Order verified
+409 HTTP update after DISPOSED
+   error                      INVALID_STATE
+   message                    Evidence is DISPOSED and can no longer change
+200 HTTP the DISPOSED record is still readable
+   status                     DISPOSED
+   version                    3
+200   history entries still on ledger: [(1, 'CREATED'), (2, 'DISPOSAL_REQUESTED'), (3, 'DISPOSAL_APPROVED')]
+
+### C-02: there is no delete
+   DELETE /api/evidence/{id} as collector -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as admin -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as judge -> 405  METHOD_NOT_ALLOWED
+
+### A3 roles: who may register (403 for the rest)
+   collector -> 201
+   forensic-analyst -> 201
+   prosecutor -> 403
+   judge -> 403
+   auditor -> 403
+   admin -> 403
+
+### B2 upload limits and types
+   disallowed type (application/x-msdownload) -> 415  UNSUPPORTED_FILE_TYPE | File type 'application/x-msdownload' is not allowed
+   empty file for DIGITAL -> 400  FILE_REQUIRED
+   file on PHYSICAL evidence -> 400  FILE_NOT_ALLOWED
+   missing required metadata field -> 400  ['description', 'caseId']
+   60 MB file (limit 50 MB) -> 413  CONTENT_TOO_LARGE
+   20 MB file -> HTTP 201 in 3531 ms
+   -> local sha256 : 9ad01f2ebdb6a25cfb24b18b415b6d62bb65d242f33c411fece382155da8fd5e
+   -> ledger sha256: 9ad01f2ebdb6a25cfb24b18b415b6d62bb65d242f33c411fece382155da8fd5e   size=20000000
+200 HTTP verify of the 20 MB file
+   status                     VERIFIED
+   file.result                VERIFIED
+
+### F1 IPFS outage: ledger information survives, verify says 503 (not NOT_FOUND)
+200 HTTP GET during outage
+   status                     COLLECTED
+   version                    2
+   metadataAvailable          False
+   metadata                   None
+503 HTTP verify during outage
+   error                      STORAGE_UNAVAILABLE
+   message                    IPFS node not reachable while reading content
+   register during outage -> 503  STORAGE_UNAVAILABLE
+
+### G4 health with the reference ledger
+200 HTTP
+   overall: UP
+   ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+   ipfs   : {'status': 'UP'}
+```
+
+## Appendix P2-F-E. Fabric-only checks (verbatim, `scripts/live/live_fabric_extra.sh`)
+
+```
+
+### F1. Every txId the API reports is a real transaction on the peers' ledger (qscc GetTransactionByID)
+   evidence EV-74d325e1-d3db-44b7-a298-f1e50b03839a  API says: txId=7e5856a9f0895f54c352be8ea629ef13185eb1be0d7ada660692a07c93848eba  ledger timestamp=2026-09-21T20:02:52.437724Z
+   qscc found -> #namespaces/fields/evidence/Sequence
+   qscc found -> 'EV-74d325e1-d3db-44b7-a298-f1e50b03839a
+   qscc found -> *EV~EV-74d325e1-d3db-44b7-a298-f1e50b03839a
+   qscc found -> CreateEvidence
+   qscc found -> EV-74d325e1-d3db-44b7-a298-f1e50b03839a
+   qscc found -> Org1MSP
+   a made-up txId -> Error: endorsement failure during query. response: status:500 message:"Failed to get transaction with id 0000000000000000000000000000000000000000000000000000000
+
+### F2. Concurrent updates to ONE record with the same expectedVersion (Fabric MVCC / version check): exactly one may win
+   round 1: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 2: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 3: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+
+### F3. Ledger outage: stop the Org1 peer the backend talks to
+   GET evidence      -> 503  LEDGER_UNAVAILABLE | The ledger network is not reachable
+   register          -> 503  LEDGER_UNAVAILABLE
+   health overall    -> DOWN | ledger: {'details': {'detail': 'The ledger network is not reachable'}, 'status': 'DOWN'}
+   /api/auth/me still works (Postgres, not the ledger) -> 200
+   after restarting the peer: GET evidence -> 200 (recovered after ~4 s, no app restart)
 ```

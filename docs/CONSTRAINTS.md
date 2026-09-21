@@ -42,7 +42,7 @@ an immutable record of who acted; it does **not** protect against a compromised 
 could claim any role. Do not describe the chaincode role check as authentication, in code, docs or the report.
 Closing the gap is A2: users enrolled through Fabric CA with a `role` certificate attribute, read via the
 chaincode's single `resolveActor` function (CHAINCODE_DESIGN.md section 5). Approved by the project owner
-2026-09-24 (decision G5).
+2026-09-22 (decision G5).
 
 ## C-09 — Never run the IPFS node outside `--offline` mode with real or realistic evidence data
 A default Kubo node joins the public IPFS network and serves anything pinned on it to anyone who learns the

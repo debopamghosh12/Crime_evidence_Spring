@@ -3,10 +3,9 @@
 How execution travels through the code. Update whenever a call path is added or changed; mark the part
 being modified with **[MODIFYING]**.
 
-**Status 2026-09-23:** Phase 1 paths (sections 1-5) are implemented and verified live. Phase 2 Spring-side
-paths (sections 7-11) are implemented and verified live **against the in-memory reference ledger**.
-**[NOT BUILT, AWAITING APPROVAL]:** the real Fabric path in section 12 (`FabricLedgerService` and the
-chaincode); until it exists, the default profile answers evidence calls with 501 NOT_IMPLEMENTED.
+**Status 2026-09-22:** Phase 1 paths (sections 1-5) and Phase 2 paths (sections 7-11) are implemented and verified live,
+the Phase 2 paths now against the **real Fabric ledger** (section 12) as well as the in-memory reference ledger. Nothing is
+marked [MODIFYING]. Phase 3 has not been started.
 
 Package prefix `com.blockevidence.backend` is omitted. Feature IDs refer to `docs/FEATURE_LIST.md`.
 
@@ -98,9 +97,8 @@ GET /actuator/health
 ## 6. Seams (G1, F1)
 
 ```
-EvidenceService ──► LedgerService (interface) ◄── FabricLedgerService  every operation throws
-                                                   LedgerNotImplementedException -> 501   [AWAITING G2 APPROVAL]
-                                              ◄── InMemoryLedgerService  only with profile memory-ledger
+EvidenceService ──► LedgerService (interface) ◄── FabricLedgerService  DEFAULT: real Fabric (section 12)
+                                              ◄── InMemoryLedgerService  only with profile memory-ledger (reference/dev)
 EvidenceService ──► IpfsClient    (interface) ◄── HttpIpfsClient        real: pin / read / unpin / isReachable
 ```
 Callers of the two interfaces: `EvidenceService`, `VerificationService`, and the health indicators.
@@ -169,6 +167,26 @@ DELETE anywhere under /api/evidence  ─► 405 (no such mapping exists, C-02)
 ```
 Nothing is unpinned from IPFS at any point.
 
-## 12. [NOT BUILT, AWAITING G2 APPROVAL] Real ledger path
-`LedgerService` (interface) -> `FabricLedgerService` -> fabric-gateway (gRPC, Org1 peer) -> chaincode `evidence`
-(Go). Designed in `docs/CHAINCODE_DESIGN.md`; not implemented. Do not treat as current behaviour.
+## 12. The real ledger path (G1, G2): BUILT and verified 2026-09-22
+
+```
+LedgerService.<write>  (EvidenceService)
+ └─ FabricLedgerService.submit(fn, args...)                     args: ids/hashes/CIDs + actorId + actorRole (from the JWT, C-05)
+     └─ contract().submitTransaction  (Fabric Gateway, gRPC over TLS to peer0.org1 :7051, identity = User1@org1, one for all users)
+         ├─ ENDORSE: the gateway picks peers of BOTH orgs; each runs chaincode `evidence` (Go) in its own container
+         │     └─ EvidenceContract.<Fn> ─ authorise(): MSP in {Org1MSP, Org2MSP}?  actor well-formed?  role allowed for this fn?  (C-08)
+         │            ─ loadEditable(): exists?  not DISPOSED?  expectedVersion == record version?
+         │            ─ validate args ─ stamp() = tx timestamp + txId ─ PutState(EV~id) ─ PutState(CID~cid~id) ─ SetEvent
+         │     endorsers disagree or a check fails -> error "CODE: message" -> FabricErrors.translate -> LedgerException(code)
+         ├─ ORDER: orderer.example.com batches the transaction into a block (~2 s batch timeout)
+         └─ COMMIT: each peer validates (endorsement policy, MVCC) and applies it; submitTransaction returns only now
+              MVCC_READ_CONFLICT (two writers, same key, same block) -> CommitException -> VERSION_CONFLICT (409)
+     ◄── TxResult{txId, timestamp, version} -> LedgerTxResult
+
+LedgerService.<read> ─ FabricLedgerService.evaluate ─ contract().evaluateTransaction (ONE peer, nothing ordered)
+   GetEvidence / GetHistory (peer history index, sorted by version) / FindByCid (composite-key range scan)
+   EVIDENCE_NOT_FOUND -> Optional.empty() for getEvidence, 404 elsewhere
+Health: evaluate GetEvidence(EV-0000...) ; EVIDENCE_NOT_FOUND = healthy (the chaincode answered)
+Failure mapping: gRPC UNAVAILABLE/DEADLINE -> LEDGER_UNAVAILABLE (503); identity paths unset -> LEDGER_UNAVAILABLE / health UNKNOWN
+```
+The connection is created lazily on first use and survives peer restarts (verified: ~4 s recovery without restarting the app).

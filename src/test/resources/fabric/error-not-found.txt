@@ -1,0 +1,1 @@
+Error: endorsement failure during query. response: status:500 message:"EVIDENCE_NOT_FOUND: Evidence EV-00000000-0000-4000-8000-000000000000 does not exist" 

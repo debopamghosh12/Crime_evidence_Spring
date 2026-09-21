@@ -29,6 +29,9 @@
 	<properties>
 		<java.version>21</java.version>
 		<jjwt.version>0.12.7</jjwt.version>
+		<!-- fabric-gateway 1.12.1 is built against gRPC 1.83.1: keep the transport on the same version. -->
+		<fabric-gateway.version>1.12.1</fabric-gateway.version>
+		<grpc.version>1.83.1</grpc.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -75,6 +78,17 @@
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-jackson</artifactId>
 			<version>${jjwt.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.hyperledger.fabric</groupId>
+			<artifactId>fabric-gateway</artifactId>
+			<version>${fabric-gateway.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.grpc</groupId>
+			<artifactId>grpc-netty-shaded</artifactId>
+			<version>${grpc.version}</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>

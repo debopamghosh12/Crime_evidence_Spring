@@ -32,6 +32,9 @@ v2  METADATA_UPDATED  tx=6b0f2ee5d6a2dd67..  at=2026-09-21T19:16:02.490837200Z  
 Automated: `InMemoryLedgerServiceTest.historyIsAppendOnlyOldestFirstWithDistinctTxIds`, `EvidenceServiceTest.historyListsEveryVersion...`.
 
 ## Known limits
-- **The tx ids above are random 64-hex values from the in-memory ledger, not Fabric transaction ids.** They
-  become real ones only after G2 is implemented.
+- ~~The tx ids above are random 64-hex values from the in-memory ledger, not Fabric transaction ids.~~ (Superseded
+  2026-09-22: on the default profile they are real Fabric ids, see the update below.)
 - Not paginated; fine for the size of an evidence record's life, revisit if a record accumulates thousands of writes.
+
+## Update 2026-09-22: on real Fabric
+History now comes from the peers' history index. The txIds are REAL: an id returned by `GET /history` was found on the ledger with `qscc GetTransactionByID` (the transaction contains `CreateEvidence`, the record key and `Org1MSP`), and a made-up id was not found (P2-F.7 F1). Timestamps are the peer's transaction times with nanosecond precision (e.g. `2026-09-21T19:49:01.247654366Z`). The earlier caveat that ids were random in-memory values no longer applies to the default profile.

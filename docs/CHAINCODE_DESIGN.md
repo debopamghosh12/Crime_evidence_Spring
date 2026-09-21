@@ -1,13 +1,13 @@
 # Chaincode design (G2): APPROVED
 
-> **Status: APPROVED by the project owner 2026-09-24 (G1-G7 as proposed, plus C-08 and C-09 in CONSTRAINTS.md). Implementation follows this document.**
+> **Status: APPROVED by the project owner 2026-09-22 (G1-G7 as proposed, plus C-08 and C-09 in CONSTRAINTS.md). Implementation follows this document.**
 > The Spring side of the ledger boundary
 > (`LedgerService` interface, `InMemoryLedgerService`) is built to this design so the Fabric
 > implementation is a swap, not a rewrite.
 
 Feature IDs refer to `docs/FEATURE_LIST.md`. Section 9 lists the decisions (all approved as proposed).
 
-## 1. Facts about the environment (checked 2026-09-23, not assumed)
+## 1. Facts about the environment (checked 2026-09-22, not assumed)
 
 | Fact | Evidence | Consequence |
 |---|---|---|
@@ -164,3 +164,27 @@ recreate the network with `createChannel -c crimechannel`. I would try (a) first
 | G5 | Roles passed as arguments now, certificate attributes in Phase 3, with the limit in section 5 accepted? | **Yes** |
 | G6 | Approve dependencies `fabric-gateway` + `grpc-netty-shaded`? | **Yes** |
 | G7 | Try to revive the stopped network first, else recreate it? | **Revive, then recreate** |
+
+
+## 10. As built (2026-09-22)
+
+Implemented in `chaincode/evidence/` (Go) and `FabricLedgerService` (Java) and verified end to end on the real network
+(`docs/TEST_CHECKLIST.md` section P2-F, `docs/FABRIC_RUNBOOK.md`). Every function, role, rule and error code in sections 3-4 is
+implemented as written. Differences and corrections:
+
+1. **Section 1 facts were wrong on two points.** The real `fabric-samples` (with `network.sh`), the `peer` binary, a Go toolchain
+   and the Node prototype are in WSL (`/home/debop/crime-evidence-mgmt`), not absent. The old `basic` chaincode's source is still not
+   on disk. The network revived with `docker start` (G7 option a); nothing was recreated.
+2. **Argument encoding:** `expectedVersion` and `fileSize` are strings parsed by the chaincode (D-031). Every write returns
+   `TxResult{txId, timestamp, version}`.
+3. **Deployed as v1.1 sequence 2**, not v1.0: a schema-validation defect in v1.0 that only a real peer exposes (D-032). A
+   regression test guards it.
+4. **`GetHistory` sorts by version** rather than relying on the peer's iteration order (tested with a simulated newest-first peer).
+5. **Events** are emitted as designed (`Evidence.Created`, `MetadataUpdated`, `StatusChanged`, `DisposalRequested`,
+   `DisposalRejected`, `DisposalApproved`, payload identifiers only); a test checks names and payload keys. Nothing listens yet (G3, Phase 4).
+6. **Role source is the argument, exactly as approved (G5), and this is constraint C-08:** `authorise()` is the single place it is
+   resolved. It authenticates only that the invoking MSP is Org1MSP or Org2MSP. It cannot authenticate the role. Do not call it authentication.
+7. **Approver != requester** is implemented but cannot trigger with the approved role table (the sets are disjoint); a test forces the
+   state to prove the rule.
+8. **Not done, as designed:** no transfer functions (Phase 3), no per-user certificate attributes (A2), no state-based endorsement, no
+   private data, no CouchDB indexes.

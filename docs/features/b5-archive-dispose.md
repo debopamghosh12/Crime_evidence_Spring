@@ -43,4 +43,7 @@ and verification; nothing unpinned; reject clears).
 - The "approver is not the requester" rule exists in the ledger, but the role sets are disjoint, so it cannot
   trigger yet; it matters once roles overlap.
 - The physical purge of a digital file is deliberately out of scope.
-- Not yet on Fabric.
+- ~~Not yet on Fabric.~~ (Superseded 2026-09-22, see the update below.)
+
+## Update 2026-09-22: on real Fabric
+The chaincode enforces disposal itself, independently of Spring: driven directly with the peer CLI it refused a COLLECTOR approving, a JUDGE approving a stale version, DISPOSED set through `UpdateStatus`, and every write after DISPOSED; `DeleteEvidence` answers `Function DeleteEvidence not found in contract EvidenceContract`. The DISPOSED record and its five-entry history remain readable on the ledger (P2-F.4). The role check is constraint C-08: the chaincode trusts the role argument.
