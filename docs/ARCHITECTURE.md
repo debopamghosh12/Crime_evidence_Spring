@@ -365,3 +365,13 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
 - **Endpoint surface:** unchanged from section 11.
 - **Limitations added:** C-08 (role trusted from the backend until A2); orphaned IPFS pins are possible during a ledger outage (D-037);
   ledger test data is permanent; one peer connection (no failover to Org2's peer).
+
+## 13. As built (Phase 3): status, custody, cases; A2 designed only, 2026-09-22
+
+- **Chaincode** `evidence` now v1.2 sequence 3 (additive, D-039): `InitiateTransfer`, `AcceptTransfer`, `RejectTransfer`, `CancelTransfer`, `FindPendingTransfers`; record gains `transfer`; `canHoldCustody` role set; 33 Go tests. Function list is pinned by a test (there is still no delete function).
+- **`LedgerService`** gained `initiateTransfer / acceptTransfer / rejectTransfer / cancelTransfer / findPendingTransferIds` (additive; Phase 2 methods unchanged). Implemented by `FabricLedgerService` (only class importing Fabric) and the in-memory reference ledger, which stays scenario-for-scenario equal to the chaincode. `LedgerEvidenceRecord` gained `Transfer`; an absent value means NONE.
+- **New Spring code (additive; no Phase 2 controller or service was edited):** `EvidenceLifecycleController` (status, transfers, pending, chain-of-custody), `CaseController`; `StatusService`, `CustodyService`, `CaseService`; `CaseFile`/`CaseMember` entities and repositories; DTOs; `domain/CaseStatus`, `domain/CaseRole`; permissions `CHANGE_STATUS`, `HOLD_CUSTODY`, `MANAGE_CASES`; Flyway `V2__cases.sql`.
+- **Endpoint surface added:** `POST /api/evidence/{id}/status`; `POST /api/evidence/{id}/transfers[/accept|/reject|/cancel]`; `GET /api/transfers/pending`; `GET /api/evidence/{id}/chain-of-custody`; `POST/GET /api/cases`, `GET/PUT /api/cases/{id}`, `POST /api/cases/{id}/members`, `DELETE /api/cases/{id}/members/{userId}`.
+- **Authentication of ledger writes is unchanged:** still the single backend identity (Org1 admin cert) with the role passed as an argument (C-08). A2 is a design awaiting the owner (`docs/A2_IDENTITY_DESIGN.md`); nothing was implemented, and B1-B5 authenticate exactly as before.
+- **Not built:** E3 (owner's choice pending), A2 (design approved first), D4 (optional), a user-directory endpoint, case-level read access (A5).
+- **Dependencies:** none added in Phase 3. A2 would add BouncyCastle `bcpkix-jdk18on` (needs approval, C-04).

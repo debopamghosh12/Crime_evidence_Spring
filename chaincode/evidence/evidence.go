@@ -81,6 +81,7 @@ func (c *EvidenceContract) CreateEvidence(ctx contractapi.TransactionContextInte
 		CreatedBy: actor.id, CreatedByRole: actor.role, CreatedAt: ts,
 		UpdatedBy: actor.id, UpdatedByRole: actor.role, UpdatedAt: ts,
 		LastAction: actionCreated, CurrentCustodian: actor.id, Disposal: Disposal{State: disposalNone},
+		Transfer: Transfer{State: transferNone},
 	}
 	if err := commit(ctx, record, txID, actionCreated); err != nil {
 		return nil, err
@@ -294,6 +295,7 @@ func (c *EvidenceContract) GetHistory(ctx contractapi.TransactionContextInterfac
 		if err := json.Unmarshal(mod.Value, &rec); err != nil {
 			return nil, fail(errInvalidState, "corrupt history entry: %v", err)
 		}
+		normalise(&rec)
 		ts := time.Unix(mod.Timestamp.GetSeconds(), int64(mod.Timestamp.GetNanos())).UTC().Format(time.RFC3339Nano)
 		entries = append(entries, &HistoryEntry{TxID: mod.TxId, Timestamp: ts, Record: rec})
 	}
@@ -364,6 +366,7 @@ func load(ctx contractapi.TransactionContextInterface, evidenceID string) (*Evid
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		return nil, fail(errInvalidState, "corrupt record for %s", evidenceID)
 	}
+	normalise(&rec)
 	return &rec, nil
 }
 
@@ -386,6 +389,14 @@ func loadEditable(ctx contractapi.TransactionContextInterface, evidenceID, expec
 		return nil, fail(errVersionConflict, "Expected version %d but the record is at version %d", want, cur.Version)
 	}
 	return cur, nil
+}
+
+// normalise gives records written by an older chaincode version (before custody transfers existed) an explicit
+// "NONE" transfer state, so every reader, including the Java side, sees a value it can parse.
+func normalise(r *EvidenceRecord) {
+	if r.Transfer.State == "" {
+		r.Transfer.State = transferNone
+	}
 }
 
 // touch stamps a modified copy of a record: next version, who, when, what, why.

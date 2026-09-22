@@ -56,6 +56,8 @@ var (
 	canChangeStatus    = set(roleCollector, roleForensicAnalyst, roleProsecutor)
 	canRequestDisposal = set(roleCollector, roleProsecutor)
 	canDecideDisposal  = set(roleJudge)
+	// Roles that can be a custodian: hold the item, hand it on, or receive it (D2). AUDITOR and ADMIN never hold evidence.
+	canHoldCustody = set(roleCollector, roleForensicAnalyst, roleProsecutor, roleJudge)
 )
 
 func set(items ...string) map[string]bool {

@@ -190,3 +190,22 @@ Health: evaluate GetEvidence(EV-0000...) ; EVIDENCE_NOT_FOUND = healthy (the cha
 Failure mapping: gRPC UNAVAILABLE/DEADLINE -> LEDGER_UNAVAILABLE (503); identity paths unset -> LEDGER_UNAVAILABLE / health UNKNOWN
 ```
 The connection is created lazily on first use and survives peer restarts (verified: ~4 s recovery without restarting the app).
+
+## 13. Change status (D1)
+1. `POST /api/evidence/{id}/status` -> JwtAuthFilter (section 1) -> `@PreAuthorize` CHANGE_STATUS (COLLECTOR, FORENSIC_ANALYST, PROSECUTOR); body validated (`expectedVersion`, `status`, non-blank `reason`).
+2. `StatusService`: target DISPOSED -> 400; `EvidenceStatus.canMoveTo(current, target)` false -> 409 `INVALID_STATE` (reads the record first, no transaction spent).
+3. `LedgerService.updateStatus(id, expectedVersion, status, reason, LedgerActor(userId, role))`, the actor from the token (C-05).
+4. Chaincode `UpdateStatus` re-checks role, version, transition and frozen DISPOSED, writes version+1 with `STATUS_CHANGED`, emits an event.
+5. Response = the new record (with the ledger txId in `/history`).
+
+## 14. Custody transfer (D2)
+1. Initiate: `POST /api/evidence/{id}/transfers`. `CustodyService` loads the receiver from PostgreSQL (`RECEIVER_NOT_FOUND` 404 / `RECEIVER_CANNOT_HOLD_EVIDENCE` 400), then `LedgerService.initiateTransfer(id, v, toUserId, toRole, reason, notes, actor)`. Chaincode: actor must be the current custodian (and a custody-holding role), no pending transfer/disposal, not DISPOSED, receiver differs from sender; writes `PENDING` + index `TRF~receiver~id`.
+2. The receiver sees it in `GET /api/transfers/pending` (`FindPendingTransfers(userId)` -> ids -> `getEvidence` each).
+3. Accept: `POST .../transfers/accept` (only the named receiver, id and role must match) -> `currentCustodian` = receiver, state ACCEPTED. Reject (receiver) / cancel (sender) -> state closes, custody unchanged.
+4. Every step is one transaction = one history entry (section 15).
+
+## 15. Custody timeline (D3)
+`GET /api/evidence/{id}/chain-of-custody` -> `LedgerService.getHistory(id)` (the peer's history index; 404 if unknown) -> `CustodyService` maps entries whose `lastAction` is CREATED or TRANSFER_* to events (`CUSTODY_STARTED`, `TRANSFER_INITIATED/ACCEPTED/REJECTED/CANCELLED`) with `custodianAfter`, ledger txId and timestamp. No database read for the events.
+
+## 16. Cases (E1, E2)
+`/api/cases...` -> JwtAuthFilter -> `@PreAuthorize` MANAGE_CASES for writes (ADMIN, PROSECUTOR), any authenticated user for reads -> `CaseService` (`@Transactional`) -> `CaseFileRepository` / `CaseMemberRepository` / `UserRepository` (PostgreSQL only; the ledger is never called). Lead officer is validated (exists, enabled, a working role) and always a member with role LEAD_OFFICER; changing the lead flips roles in place. Evidence and cases are not linked yet (E3, waiting for the owner).

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.security.Role;
 
 /**
  * G1, FINAL for Phase 2. The single seam between the application and the blockchain: every ledger
@@ -21,8 +22,6 @@ import com.blockevidence.backend.domain.EvidenceStatus;
  * <li>Nothing here can delete a record (C-02): there is no such method by design.</li>
  * <li>Only ids, hashes and CIDs cross this interface (C-06). Timestamps are the ledger's (C4).</li>
  * </ul>
- * Transfer operations (initiate/accept/reject) are intentionally absent: they are designed and added
- * with D2 in Phase 3, not guessed at now.
  */
 public interface LedgerService {
 
@@ -48,6 +47,26 @@ public interface LedgerService {
 
     /** B5: rejects the pending request; the record is otherwise unchanged. */
     LedgerTxResult rejectDisposal(String evidenceId, int expectedVersion, String note, LedgerActor actor);
+
+    /**
+     * D2: the CURRENT CUSTODIAN hands evidence to {@code toUserId} (whose role the backend supplies as {@code toRole};
+     * it must be a role that can hold evidence). Custody does not move until the receiver accepts. Only one transfer
+     * can be pending, and none while a disposal request is pending.
+     */
+    LedgerTxResult initiateTransfer(String evidenceId, int expectedVersion, String toUserId, Role toRole, String reason,
+            String notes, LedgerActor actor);
+
+    /** D2: the named receiver accepts; they become the current custodian. */
+    LedgerTxResult acceptTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor);
+
+    /** D2: the named receiver declines; custody stays with the sender. */
+    LedgerTxResult rejectTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor);
+
+    /** D2: the sender withdraws a pending transfer. */
+    LedgerTxResult cancelTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor);
+
+    /** D2: ids of evidence with a transfer still PENDING toward this user. Empty if none. */
+    List<String> findPendingTransferIds(String userId);
 
     /** B3: current state, or empty if no such evidence. */
     Optional<LedgerEvidenceRecord> getEvidence(String evidenceId);

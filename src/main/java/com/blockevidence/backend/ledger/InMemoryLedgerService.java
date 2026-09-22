@@ -58,6 +58,9 @@ public class InMemoryLedgerService implements LedgerService {
     static final Set<Role> CAN_CHANGE_STATUS = EnumSet.of(Role.COLLECTOR, Role.FORENSIC_ANALYST, Role.PROSECUTOR);
     static final Set<Role> CAN_REQUEST_DISPOSAL = EnumSet.of(Role.COLLECTOR, Role.PROSECUTOR);
     static final Set<Role> CAN_DECIDE_DISPOSAL = EnumSet.of(Role.JUDGE);
+    // Roles that can hold evidence: hand it on, receive it (D2). AUDITOR and ADMIN never do.
+    static final Set<Role> CAN_HOLD_CUSTODY = EnumSet.of(Role.COLLECTOR, Role.FORENSIC_ANALYST, Role.PROSECUTOR, Role.JUDGE);
+    private static final int MAX_NOTES = 1000;
 
     private record Version(String txId, Instant timestamp, LedgerEvidenceRecord record) {
     }
@@ -67,6 +70,8 @@ public class InMemoryLedgerService implements LedgerService {
     private final Clock clock;
     private final Map<String, List<Version>> history = new HashMap<>();
     private final Map<String, Set<String>> cidIndex = new HashMap<>();
+    // append-only, like the chaincode's TRF~user~id index: entries are never removed, pending-ness is checked on read
+    private final Map<String, Set<String>> transferIndex = new HashMap<>();
 
     public InMemoryLedgerService(Clock clock) {
         this.clock = clock;
@@ -98,7 +103,7 @@ public class InMemoryLedgerService implements LedgerService {
                 EvidenceStatus.COLLECTED, 1, e.metadataCid(), e.metadataSha256(), e.fileCid(), e.fileSha256(),
                 e.fileSize(), actor.userId(), actor.role().name(), ts.timestamp(), actor.userId(),
                 actor.role().name(), ts.timestamp(), LedgerAction.CREATED, "", actor.userId(),
-                LedgerEvidenceRecord.Disposal.none());
+                LedgerEvidenceRecord.Disposal.none(), LedgerEvidenceRecord.Transfer.none());
         history.put(e.evidenceId(), new ArrayList<>(List.of(new Version(ts.txId(), ts.timestamp(), record))));
         index(e.evidenceId(), e.metadataCid(), e.fileCid());
         return new LedgerTxResult(ts.txId(), ts.timestamp());
@@ -118,7 +123,7 @@ public class InMemoryLedgerService implements LedgerService {
                 cur.status(), cur.version() + 1, newMetadataCid, newMetadataSha256, cur.fileCid(), cur.fileSha256(),
                 cur.fileSize(), cur.createdBy(), cur.createdByRole(), cur.createdAt(), actor.userId(),
                 actor.role().name(), ts.timestamp(), LedgerAction.METADATA_UPDATED, reason, cur.currentCustodian(),
-                cur.disposal());
+                cur.disposal(), cur.transfer());
         append(id, ts, next);
         index(id, newMetadataCid);
         return new LedgerTxResult(ts.txId(), ts.timestamp());
@@ -182,6 +187,101 @@ public class InMemoryLedgerService implements LedgerService {
         return new LedgerTxResult(ts.txId(), ts.timestamp());
     }
 
+    // ------------------------------------------------------------------------------- custody transfer (D2)
+
+    @Override
+    public synchronized LedgerTxResult initiateTransfer(String id, int expectedVersion, String toUserId, Role toRole,
+            String reason, String notes, LedgerActor actor) {
+        requireRole(actor, CAN_HOLD_CUSTODY, "transfer custody");
+        LedgerEvidenceRecord cur = editable(id, expectedVersion);
+        if (!actor.userId().equals(cur.currentCustodian())) {
+            throw new LedgerException(FORBIDDEN_ROLE, "Only the current custodian can transfer this evidence");
+        }
+        require(USER_ID.matcher(nz(toUserId)).matches(), "toUserId is malformed");
+        require(toRole != null && CAN_HOLD_CUSTODY.contains(toRole), "Role " + toRole + " cannot hold custody of evidence");
+        require(!toUserId.equals(actor.userId()), "Custody cannot be transferred to yourself");
+        requireReason(reason);
+        require(notes == null || notes.length() <= MAX_NOTES, "notes are longer than " + MAX_NOTES + " characters");
+        if (state(cur) == LedgerEvidenceRecord.TransferState.PENDING) {
+            throw new LedgerException(INVALID_STATE, "A transfer is already pending");
+        }
+        if (cur.disposal().state() == LedgerEvidenceRecord.DisposalState.PENDING) {
+            throw new LedgerException(INVALID_STATE, "Evidence cannot be transferred while a disposal request is pending");
+        }
+        Version ts = stamp();
+        var transfer = new LedgerEvidenceRecord.Transfer(LedgerEvidenceRecord.TransferState.PENDING, actor.userId(),
+                toUserId, toRole, reason, notes, ts.timestamp(), null, null);
+        append(id, ts, evolve(cur, actor, ts, LedgerAction.TRANSFER_INITIATED, reason, cur.status(), cur.disposal(),
+                transfer, cur.currentCustodian()));
+        transferIndex.computeIfAbsent(toUserId, k -> new LinkedHashSet<>()).add(id);
+        return new LedgerTxResult(ts.txId(), ts.timestamp());
+    }
+
+    @Override
+    public synchronized LedgerTxResult acceptTransfer(String id, int expectedVersion, String note, LedgerActor actor) {
+        return resolve(id, expectedVersion, note, actor, LedgerEvidenceRecord.TransferState.ACCEPTED);
+    }
+
+    @Override
+    public synchronized LedgerTxResult rejectTransfer(String id, int expectedVersion, String note, LedgerActor actor) {
+        return resolve(id, expectedVersion, note, actor, LedgerEvidenceRecord.TransferState.REJECTED);
+    }
+
+    @Override
+    public synchronized LedgerTxResult cancelTransfer(String id, int expectedVersion, String note, LedgerActor actor) {
+        return resolve(id, expectedVersion, note, actor, LedgerEvidenceRecord.TransferState.CANCELLED);
+    }
+
+    private LedgerTxResult resolve(String id, int expectedVersion, String note, LedgerActor actor,
+            LedgerEvidenceRecord.TransferState outcome) {
+        requireRole(actor, CAN_HOLD_CUSTODY, "resolve a custody transfer");
+        LedgerEvidenceRecord cur = editable(id, expectedVersion);
+        if (state(cur) != LedgerEvidenceRecord.TransferState.PENDING) {
+            throw new LedgerException(INVALID_STATE, "There is no pending transfer");
+        }
+        require(note == null || note.length() <= MAX_NOTES, "note is longer than " + MAX_NOTES + " characters");
+        var t = cur.transfer();
+        if (outcome == LedgerEvidenceRecord.TransferState.CANCELLED) {
+            if (!actor.userId().equals(t.from())) {
+                throw new LedgerException(FORBIDDEN_ROLE, "Only the sender can cancel a transfer");
+            }
+        } else {
+            if (!actor.userId().equals(t.to())) {
+                throw new LedgerException(FORBIDDEN_ROLE, "Only the named receiver can respond to this transfer");
+            }
+            if (actor.role() != t.toRole()) {
+                throw new LedgerException(FORBIDDEN_ROLE,
+                        "The responding role does not match the role the transfer was addressed to");
+            }
+        }
+        Version ts = stamp();
+        var resolved = new LedgerEvidenceRecord.Transfer(outcome, t.from(), t.to(), t.toRole(), t.reason(), t.notes(),
+                t.initiatedAt(), ts.timestamp(), note);
+        LedgerAction action = switch (outcome) {
+            case ACCEPTED -> LedgerAction.TRANSFER_ACCEPTED;
+            case CANCELLED -> LedgerAction.TRANSFER_CANCELLED;
+            default -> LedgerAction.TRANSFER_REJECTED;
+        };
+        String custodian = outcome == LedgerEvidenceRecord.TransferState.ACCEPTED ? t.to() : cur.currentCustodian();
+        append(id, ts, evolve(cur, actor, ts, action, t.reason(), cur.status(), cur.disposal(), resolved, custodian));
+        return new LedgerTxResult(ts.txId(), ts.timestamp());
+    }
+
+    @Override
+    public synchronized List<String> findPendingTransferIds(String userId) {
+        require(USER_ID.matcher(nz(userId)).matches(), "userId is malformed");
+        return transferIndex.getOrDefault(userId, Set.of()).stream()
+                .filter(id -> {
+                    var r = history.get(id).get(history.get(id).size() - 1).record();
+                    return state(r) == LedgerEvidenceRecord.TransferState.PENDING && userId.equals(r.transfer().to());
+                }).toList();
+    }
+
+    /** Records written before transfers existed have no transfer object; that means NONE. */
+    private static LedgerEvidenceRecord.TransferState state(LedgerEvidenceRecord r) {
+        return r.transfer() == null ? LedgerEvidenceRecord.TransferState.NONE : r.transfer().state();
+    }
+
     // -------------------------------------------------------------------------------------- reads
 
     @Override
@@ -228,10 +328,16 @@ public class InMemoryLedgerService implements LedgerService {
 
     private static LedgerEvidenceRecord evolve(LedgerEvidenceRecord cur, LedgerActor actor, Version ts,
             LedgerAction action, String reason, EvidenceStatus status, LedgerEvidenceRecord.Disposal disposal) {
+        return evolve(cur, actor, ts, action, reason, status, disposal, cur.transfer(), cur.currentCustodian());
+    }
+
+    private static LedgerEvidenceRecord evolve(LedgerEvidenceRecord cur, LedgerActor actor, Version ts,
+            LedgerAction action, String reason, EvidenceStatus status, LedgerEvidenceRecord.Disposal disposal,
+            LedgerEvidenceRecord.Transfer transfer, String custodian) {
         return new LedgerEvidenceRecord(cur.evidenceId(), cur.caseId(), cur.evidenceType(), status,
                 cur.version() + 1, cur.metadataCid(), cur.metadataSha256(), cur.fileCid(), cur.fileSha256(),
                 cur.fileSize(), cur.createdBy(), cur.createdByRole(), cur.createdAt(), actor.userId(),
-                actor.role().name(), ts.timestamp(), action, reason, cur.currentCustodian(), disposal);
+                actor.role().name(), ts.timestamp(), action, reason, custodian, disposal, transfer);
     }
 
     private void append(String id, Version ts, LedgerEvidenceRecord record) {

@@ -119,6 +119,75 @@ class FabricLedgerServiceTest {
         })).isEmpty();
     }
 
+    // ------------------------------------------- Phase 3 wire format (real peer output, chaincode v1.2 / sequence 3)
+
+    @Test
+    void parsesARealRecordWithAPendingTransfer() throws IOException {
+        LedgerEvidenceRecord r = unconfigured().parse(fixture("p3-get-pending.json"), LedgerEvidenceRecord.class);
+
+        assertThat(r.lastAction()).isEqualTo(LedgerAction.TRANSFER_INITIATED);
+        assertThat(r.transfer().state()).isEqualTo(LedgerEvidenceRecord.TransferState.PENDING);
+        assertThat(r.transfer().from()).isEqualTo("11111111-1111-4111-8111-111111111111");
+        assertThat(r.transfer().to()).isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(r.transfer().toRole()).isEqualTo(Role.FORENSIC_ANALYST);
+        assertThat(r.transfer().notes()).isEqualTo("sealed bag 7");
+        assertThat(r.transfer().initiatedAt()).isNotNull();
+        assertThat(r.transfer().resolvedAt()).isNull();
+        assertThat(r.currentCustodian()).as("custody has not moved yet").isEqualTo(r.transfer().from());
+    }
+
+    @Test
+    void parsesARealRecordAfterAcceptanceAndOneThatHasNeverBeenTransferred() throws IOException {
+        LedgerEvidenceRecord accepted = unconfigured().parse(fixture("p3-get-accepted.json"), LedgerEvidenceRecord.class);
+        assertThat(accepted.transfer().state()).isEqualTo(LedgerEvidenceRecord.TransferState.ACCEPTED);
+        assertThat(accepted.transfer().resolutionNote()).isEqualTo("received intact");
+        assertThat(accepted.transfer().resolvedAt()).isNotNull();
+        assertThat(accepted.currentCustodian()).isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(accepted.createdBy()).isEqualTo("11111111-1111-4111-8111-111111111111");
+
+        LedgerEvidenceRecord fresh = unconfigured().parse(fixture("p3-get-new.json"), LedgerEvidenceRecord.class);
+        assertThat(fresh.transfer().state()).isEqualTo(LedgerEvidenceRecord.TransferState.NONE);
+        assertThat(fresh.transfer().from()).isNull();
+    }
+
+    @Test
+    void aRecordWrittenBeforeTransfersExistedStillParsesAsNoTransfer() throws IOException {
+        // get-physical.json was captured on chaincode v1.1 and has no "transfer" key at all.
+        assertThat(text("get-physical.json")).doesNotContain("\"transfer\"");
+        LedgerEvidenceRecord r = unconfigured().parse(fixture("get-physical.json"), LedgerEvidenceRecord.class);
+
+        assertThat(r.transfer()).isNotNull();
+        assertThat(r.transfer().state()).isEqualTo(LedgerEvidenceRecord.TransferState.NONE);
+    }
+
+    @Test
+    void parsesARealTransferHistoryAndPendingLists() throws IOException {
+        List<LedgerHistoryEntry> h = unconfigured().parse(fixture("p3-history.json"), new TypeReference<List<LedgerHistoryEntry>>() {
+        });
+        assertThat(h).extracting(e -> e.record().lastAction()).containsExactly(LedgerAction.CREATED, LedgerAction.TRANSFER_INITIATED,
+                LedgerAction.TRANSFER_ACCEPTED, LedgerAction.TRANSFER_INITIATED, LedgerAction.TRANSFER_REJECTED);
+        assertThat(h).extracting(LedgerHistoryEntry::txId).allMatch(t -> t.matches("[0-9a-f]{64}")).doesNotHaveDuplicates();
+        assertThat(h.get(4).record().currentCustodian()).isEqualTo("22222222-2222-4222-8222-222222222222");
+
+        assertThat(unconfigured().parse(fixture("p3-find-pending.json"), new TypeReference<List<String>>() {
+        })).hasSize(1).allMatch(id -> id.startsWith("EV-"));
+        assertThat(unconfigured().parse(fixture("p3-find-pending-none.json"), new TypeReference<List<String>>() {
+        })).isEmpty();
+        assertThat(unconfigured().parse(fixture("p3-find-pending-after.json"), new TypeReference<List<String>>() {
+        })).as("a resolved transfer leaves the pending list").isEmpty();
+    }
+
+    @Test
+    void translatesTheRealPeerErrorsForTransfers() throws IOException {
+        LedgerException forbidden = FabricErrors.translate(text("p3-error-forbidden-role.txt"), false, false);
+        assertThat(forbidden.ledgerCode()).isEqualTo(LedgerErrorCode.FORBIDDEN_ROLE);
+        assertThat(forbidden.getMessage()).isEqualTo("Only the named receiver can respond to this transfer");
+
+        LedgerException state = FabricErrors.translate(text("p3-error-invalid-state.txt"), false, false);
+        assertThat(state.ledgerCode()).isEqualTo(LedgerErrorCode.INVALID_STATE);
+        assertThat(state.getStatus().value()).isEqualTo(409);
+    }
+
     // ------------------------------------------------------------- error translation (real messages)
 
     @Test

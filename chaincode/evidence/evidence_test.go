@@ -506,8 +506,8 @@ func TestTheExportedFunctionSetIsExactlyTheApprovedOne(t *testing.T) {
 		got = append(got, typ.Method(i).Name)
 	}
 	sort.Strings(got)
-	want := []string{"ApproveDisposal", "CreateEvidence", "FindByCid", "GetEvidence", "GetHistory",
-		"RejectDisposal", "RequestDisposal", "UpdateEvidence", "UpdateStatus"}
+	want := []string{"AcceptTransfer", "ApproveDisposal", "CancelTransfer", "CreateEvidence", "FindByCid", "FindPendingTransfers",
+		"GetEvidence", "GetHistory", "InitiateTransfer", "RejectDisposal", "RejectTransfer", "RequestDisposal", "UpdateEvidence", "UpdateStatus"}
 	// contractapi.Contract contributes its own helper methods; keep only ours by name.
 	var ours []string
 	for _, n := range got {
@@ -542,7 +542,7 @@ func TestRecordJsonKeysAreTheContractWithTheJavaSide(t *testing.T) {
 	sort.Strings(keys)
 	want := []string{"caseId", "createdAt", "createdBy", "createdByRole", "currentCustodian", "disposal", "docType",
 		"evidenceId", "evidenceType", "fileCid", "fileSha256", "fileSize", "lastAction", "lastReason", "metadataCid",
-		"metadataSha256", "status", "updatedAt", "updatedBy", "updatedByRole", "version"}
+		"metadataSha256", "status", "transfer", "updatedAt", "updatedBy", "updatedByRole", "version"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Fatalf("record keys changed:\n got %v\nwant %v", keys, want)
 	}

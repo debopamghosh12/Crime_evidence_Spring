@@ -21,6 +21,21 @@ type Disposal struct {
 	Reason      string `json:"reason,omitempty" metadata:",optional"`
 }
 
+// Transfer is the state of the most recent custody transfer (D2). State is NONE, PENDING, ACCEPTED, REJECTED or
+// CANCELLED; the details of the last transfer stay on the record after it is resolved (only PENDING blocks a new one),
+// and every version of the record is in the history, which is what the custody timeline (D3) is built from.
+type Transfer struct {
+	State          string `json:"state"`
+	From           string `json:"from,omitempty" metadata:",optional"`
+	To             string `json:"to,omitempty" metadata:",optional"`
+	ToRole         string `json:"toRole,omitempty" metadata:",optional"`
+	Reason         string `json:"reason,omitempty" metadata:",optional"`
+	Notes          string `json:"notes,omitempty" metadata:",optional"`
+	InitiatedAt    string `json:"initiatedAt,omitempty" metadata:",optional"`
+	ResolvedAt     string `json:"resolvedAt,omitempty" metadata:",optional"`
+	ResolutionNote string `json:"resolutionNote,omitempty" metadata:",optional"`
+}
+
 // EvidenceRecord is the world-state value stored under EV~<evidenceId>.
 type EvidenceRecord struct {
 	DocType        string `json:"docType"`
@@ -45,6 +60,7 @@ type EvidenceRecord struct {
 	LastReason       string   `json:"lastReason"`
 	CurrentCustodian string   `json:"currentCustodian"`
 	Disposal         Disposal `json:"disposal"`
+	Transfer         Transfer `json:"transfer"`
 }
 
 // TxResult is returned by every write so the caller learns the transaction id and the LEDGER's
@@ -78,4 +94,8 @@ const (
 	actionDisposalRequested = "DISPOSAL_REQUESTED"
 	actionDisposalApproved  = "DISPOSAL_APPROVED"
 	actionDisposalRejected  = "DISPOSAL_REJECTED"
+	actionTransferInitiated = "TRANSFER_INITIATED"
+	actionTransferAccepted  = "TRANSFER_ACCEPTED"
+	actionTransferRejected  = "TRANSFER_REJECTED"
+	actionTransferCancelled = "TRANSFER_CANCELLED"
 )

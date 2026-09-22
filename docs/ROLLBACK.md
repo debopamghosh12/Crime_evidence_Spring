@@ -1,5 +1,37 @@
 # Rollback
 
+## Phase 3 (D1-D3, E1-E3, A2), written 2026-09-22 before the edit
+
+**Revert target:** git tag `phase2-done` (commit `7b814eb`, pushed to origin). Earlier: `phase2-spring-done` (`9e159b5`), `phase1-done` (`c1a4d4b`).
+Phase 3 work is uncommitted until the owner reviews it. Roll back with `git stash -u` or `git reset --hard phase2-done && git clean -fd`.
+
+**Repository changes expected:** new Flyway migration `V2__cases.sql` (Postgres schema: a NEW migration, never an edit of V1); new
+entities/services/controllers for status, custody and cases; additive chaincode functions (a NEW chaincode version, see below);
+`LedgerService` gains methods (additive); docs. **Nothing that authenticates Phase 2 writes changes before the owner approves the A2 design
+(docs/A2_IDENTITY_DESIGN.md).**
+
+**Side effects git does NOT undo:**
+- **Postgres:** Flyway V2 creates tables `cases`, `case_members`. Undo: `docker exec be-postgres psql ... -c "drop table case_members, cases; delete from flyway_schema_history where version='2'"`
+  (or remove volume `be-postgres-data`).
+- **Fabric CA (A2 spike):** the design work registers and enrolls a throwaway identity `a2spike-*` on `ca_org1` and revokes it. A CA registry entry
+  cannot be deleted, only revoked. Harmless, and listed here so it is not a surprise.
+- **Fabric ledger / chaincode:** any new chaincode version (`evidence` v1.2+ with a higher sequence) is committed to the channel and cannot be
+  removed; see docs/FABRIC_RUNBOOK.md. Ledger test data is permanent; Phase 3 test records use case ids `FAB-P3-*`.
+- Containers started for verification are stopped again at the end of the session.
+
+**Recorded after the fact (2026-09-22, end of Phase 3 build):**
+- Chaincode `evidence` **v1.2 seq 3** is committed on the channel (`querycommitted` shows `evidence 1.2 seq 3`); it cannot be removed, only superseded.
+  Records written under it carry the `transfer` field, which v1.1 code would not understand: to go back you would deploy v1.1's code as a
+  new higher sequence, not "undo" seq 3.
+- An unused package `evidence_1.0:a06b4dc1...` is installed on BOTH peers (a first deploy was run without `VER=1.2 SEQ=3` and refused at approval;
+  nothing was committed). It is harmless and was left in place.
+- The A2 CA spike registered UUID-named test identities on `ca_org1`; all were revoked afterwards (registry entries remain by design).
+  The original identities (`admin`, `peer0`, `user1`, `org1admin`, `appUser`) were verified untouched. The spike scripts were not kept in the repository.
+- Postgres has tables `cases`, `case_members` and Flyway row `2 | cases` (undo commands above). Two test cases `FAB-P3-CASE-*` exist.
+- New ledger records with case ids `FAB-WIRE-P3`, `FAB-P3-1`, `FAB-P3-CASE-*` are permanent.
+
+---
+
 ## Chaincode + FabricLedgerService (G2), written 2026-09-22 before the edit
 
 **Revert target:** git tag `phase2-spring-done` (commit `9e159b5`: Phase 2 Spring side with the in-memory

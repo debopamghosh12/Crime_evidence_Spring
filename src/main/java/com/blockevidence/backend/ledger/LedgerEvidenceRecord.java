@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import com.blockevidence.backend.domain.EvidenceStatus;
 import com.blockevidence.backend.domain.EvidenceType;
+import com.blockevidence.backend.security.Role;
 
 /**
  * The on-ledger state of one evidence item at one version (docs/CHAINCODE_DESIGN.md section 3).
@@ -31,10 +32,36 @@ public record LedgerEvidenceRecord(
         LedgerAction lastAction,
         String lastReason,
         String currentCustodian,
-        Disposal disposal) {
+        Disposal disposal,
+        Transfer transfer) {
+
+    /** A record serialised before transfers existed has no "transfer" key; it means "never transferred", not "unknown". */
+    public LedgerEvidenceRecord {
+        if (transfer == null) {
+            transfer = Transfer.none();
+        }
+    }
 
     public enum DisposalState {
         NONE, PENDING
+    }
+
+    public enum TransferState {
+        NONE, PENDING, ACCEPTED, REJECTED, CANCELLED
+    }
+
+    /**
+     * D2: the most recent custody transfer. Only PENDING blocks a new one; the details of a resolved transfer stay
+     * on the record, and every version is in the history, which the custody timeline (D3) is built from. {@code toRole}
+     * is the receiver's role as the backend supplied it (C-08). The chaincode returns NONE for records written before
+     * transfers existed, and the record's constructor turns an absent value into NONE as well.
+     */
+    public record Transfer(TransferState state, String from, String to, Role toRole, String reason, String notes,
+            Instant initiatedAt, Instant resolvedAt, String resolutionNote) {
+
+        public static Transfer none() {
+            return new Transfer(TransferState.NONE, null, null, null, null, null, null, null, null);
+        }
     }
 
     /** {@code requestedBy/requestedAt/reason} are only meaningful while {@code state} is PENDING. */

@@ -1,0 +1,1 @@
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: Only the named receiver can respond to this transfer" 

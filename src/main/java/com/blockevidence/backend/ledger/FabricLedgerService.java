@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 
 import com.blockevidence.backend.config.FabricProperties;
 import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.security.Role;
 import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
@@ -117,6 +118,37 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
     public LedgerTxResult rejectDisposal(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
         return submit("RejectDisposal", evidenceId, Integer.toString(expectedVersion), note, actor.userId(),
                 actor.role().name());
+    }
+
+    @Override
+    public LedgerTxResult initiateTransfer(String evidenceId, int expectedVersion, String toUserId, Role toRole,
+            String reason, String notes, LedgerActor actor) {
+        return submit("InitiateTransfer", evidenceId, Integer.toString(expectedVersion), toUserId, toRole.name(), reason,
+                nullToEmpty(notes), actor.userId(), actor.role().name());
+    }
+
+    @Override
+    public LedgerTxResult acceptTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
+        return submit("AcceptTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+                actor.role().name());
+    }
+
+    @Override
+    public LedgerTxResult rejectTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
+        return submit("RejectTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+                actor.role().name());
+    }
+
+    @Override
+    public LedgerTxResult cancelTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
+        return submit("CancelTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+                actor.role().name());
+    }
+
+    @Override
+    public List<String> findPendingTransferIds(String userId) {
+        return parse(evaluate("FindPendingTransfers", userId), new TypeReference<List<String>>() {
+        });
     }
 
     // -------------------------------------------------------------------------------------- reads

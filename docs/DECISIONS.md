@@ -115,3 +115,27 @@ The network's containers and volumes had been stopped for four months; they star
 
 ## D-037 — Orphaned pins are possible during a ledger outage (accepted, by design) (2026-09-22)
 When the ledger is down, register fails with 503 after IPFS content has been pinned, and the compensation step (D-024) cannot ask the ledger whether those CIDs are referenced, so it deliberately unpins nothing. Result: unreferenced pins stay on the IPFS node until cleaned up. This was observed live (register during a peer outage answered 503). Accepted because a leaked pin costs disk while a wrongly removed pin could destroy evidence. A future sweep can reconcile pins against the ledger (not built).
+
+## D-038 — Custody moves only on acceptance; the pending index is never deleted (2026-09-22)
+A transfer is two ledger transactions by two different users: `InitiateTransfer` (current custodian) records `transfer.state = PENDING` and leaves `currentCustodian` untouched; `AcceptTransfer` (the named receiver, matched on user id AND role) is the only step that changes custody. Reject (receiver) and cancel (sender) close it with custody unchanged. One pending transfer per item; none during a pending disposal or after DISPOSED. The "transfers to me" list uses composite keys `TRF~<userId>~<evidenceId>` written at initiation; they are never deleted (C-02, no `DelState` anywhere) and are filtered on read against the record's current state. Rejected: a one-step "give custody" (the sender could push evidence onto anyone), and deleting the index entry on resolution (would need DelState).
+
+## D-039 — Chaincode v1.2 sequence 3, additive; old records are normalised on read (2026-09-22)
+Custody added functions and a `transfer` field to the record, so it shipped as a NEW chaincode version (v1.2, sequence 3), never an edit of the committed v1.1 definition (a committed definition cannot be edited). Records written by v1.1 have no `transfer` key; `load()` and `GetHistory` fill `transfer = {state: NONE}` on read, so no data migration and no rewrite of history was needed. The Java record does the same for an absent key (`docs/bugs/ledger-record-without-transfer-key.md`), so neither side depends on the other. Side effect: a mistaken first deploy (without `VER`/`SEQ`) left an unused installed package `evidence_1.0` on both peers, harmless and listed in ROLLBACK.
+
+## D-040 — Status machine finalised as a strict line, checked twice (2026-09-22)
+`COLLECTED -> PROCESSING -> ANALYZED -> ARCHIVED -> RELEASED`; no backward move, no skipping; DISPOSED only through an approved disposal (B5). The rule lives in `EvidenceStatus.canMoveTo` (Java) and `model.go` (chaincode), each with tests; the service checks first for a clear 409 without spending a transaction, the chaincode enforces it again for callers that bypass Spring. Roles stay COLLECTOR, FORENSIC_ANALYST, PROSECUTOR (D-019). Open for the owner: any of those roles may move any item, not only its custodian (KNOWN_GAPS D).
+
+## D-041 — Cases live in PostgreSQL only; the ledger keeps the case number as a string (2026-09-22)
+Tables `cases` and `case_members` (Flyway V2, a new migration), consistent with C-06 (no descriptive/personal data on the ledger). The case number uses the ledger's `caseId` character set, so any case number is a valid `caseId`. Membership carries a role ON THE CASE, separate from the system role. There is no endpoint that deletes a case. Only ADMIN and PROSECUTOR manage cases (D-019).
+
+## D-042 — Lead-officer change is an in-place role change (found live) (2026-09-22)
+The first implementation deleted and re-inserted the previous lead's membership row and failed against real PostgreSQL (Hibernate flushes inserts before deletes, unique `(case_id, user_id)`). Now the existing rows change role (`CaseMember.changeRole`). The only remaining `delete` in the code base is removing a non-lead member row (not evidence, so C-02 does not apply). See `docs/bugs/case-lead-change-unique-violation.md`.
+
+## D-043 — The custody timeline is derived from ledger history, not stored (2026-09-22)
+`GET /api/evidence/{id}/chain-of-custody` maps the ledger's history entries to events; each carries its own ledger txId and timestamp. Nothing is copied into PostgreSQL, so the timeline cannot diverge from the ledger. Rejected: a `custody_events` table (a second copy that could disagree, and mutable).
+
+## D-044 — E3 and A2 held for the owner; Phase 3 test data uses `FAB-P3-*` (2026-09-22)
+E3 (evidence-to-case linking) needs a change to Phase 2's register path or to `CreateEvidence`, so it was NOT built; two options are laid out in `docs/features/e1-e2-cases-and-officers.md`. A2 (per-user Fabric identities) changes how every write is authenticated; per the owner's instruction only its design (`docs/A2_IDENTITY_DESIGN.md`, questions A2-Q1..Q8) was written, after an empirical spike against the real CA. Nothing that authenticates B1-B5 changed. Ledger records created by Phase 3 checks use case ids `FAB-P3-*` (permanent, KNOWN_GAPS C).
+
+## D-045 — Wire fixtures: keep the v1.1 ones, add v1.2 ones (2026-09-22)
+`capture_wire_p3.sh` writes `p3-*.json/txt` (pending and accepted transfers, a never-transferred record, a five-step history, pending lists, two real error texts). The Phase 2 fixtures (captured on v1.1, no `transfer` key) are kept on purpose: they are the real "record written before transfers existed" shape.

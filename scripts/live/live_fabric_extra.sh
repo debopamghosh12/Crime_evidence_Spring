@@ -24,8 +24,8 @@ ID=$(curl -s -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F 'metadata
 curl -s $B/api/evidence/$ID/history -H "Authorization: Bearer $TAU" -o body.json
 TX=$(python -c "import json;print(json.load(open('body.json'))[0]['txId'])"); API_TS=$(python -c "import json;print(json.load(open('body.json'))[0]['timestamp'])")
 echo "   evidence $ID  API says: txId=$TX  ledger timestamp=$API_TS"
-wsl -d Ubuntu -- bash -c ". $SPW/fab_env.sh; org1; peer chaincode query -C crimechannel -n qscc -c '{\"Args\":[\"GetTransactionByID\",\"crimechannel\",\"$TX\"]}' 2>&1 | strings | grep -E 'EV-|evidence|CreateEvidence|Org1MSP|Org2MSP' | sort -u | head -6" | tr -d '\0\r' | sed 's/^/   qscc found -> /'
-wsl -d Ubuntu -- bash -c ". $SPW/fab_env.sh; org1; peer chaincode query -C crimechannel -n qscc -c '{\"Args\":[\"GetTransactionByID\",\"crimechannel\",\"0000000000000000000000000000000000000000000000000000000000000000\"]}' 2>&1 | tail -1 | cut -c1-160" | tr -d '\0\r' | sed 's/^/   a made-up txId -> /'
+wsl -d Ubuntu -- bash -c ". \"$SPW/fab_env.sh\"; org1; peer chaincode query -C crimechannel -n qscc -c '{\"Args\":[\"GetTransactionByID\",\"crimechannel\",\"$TX\"]}' 2>&1 | strings | grep -E 'EV-|evidence|CreateEvidence|Org1MSP|Org2MSP' | sort -u | head -6" | tr -d '\0\r' | sed 's/^/   qscc found -> /'
+wsl -d Ubuntu -- bash -c ". \"$SPW/fab_env.sh\"; org1; peer chaincode query -C crimechannel -n qscc -c '{\"Args\":[\"GetTransactionByID\",\"crimechannel\",\"0000000000000000000000000000000000000000000000000000000000000000\"]}' 2>&1 | tail -1 | cut -c1-160" | tr -d '\0\r' | sed 's/^/   a made-up txId -> /'
 
 hdr "F2. Concurrent updates to ONE record with the same expectedVersion (Fabric MVCC / version check): exactly one may win"
 ID2=$(curl -s -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F 'metadata={"caseId":"FAB-LIVE-4","type":"PHYSICAL","description":"race target"};type=application/json' | python -c "import sys,json;print(json.load(sys.stdin)['evidenceId'])")

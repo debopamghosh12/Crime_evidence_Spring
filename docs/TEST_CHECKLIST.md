@@ -3,11 +3,90 @@
 Run before calling anything "done". Each check has the command and the **actual output** from the run
 that verified it. If a feature has no check here, add one first, then run it.
 
-Last full run: **2026-09-22, Phase 1 + Phase 2 (B1-B5, C1-C3, G2)**. **130 Java tests + 22 Go chaincode tests passed, 0 failed.**
+Last full run: **2026-09-22, Phase 1 + Phase 2 + Phase 3 (D1-D3, E1, E2)**. **171 Java tests + 33 Go chaincode tests passed, 0 failed** (section P3).
+Phase 3 was run live through Spring -> real Fabric (chaincode v1.2 seq 3) + real PostgreSQL + offline Kubo; the Phase 2 checklist was re-run as a regression.
+Previous full run: 2026-09-22, Phase 1 + Phase 2: 130 Java tests + 22 Go chaincode tests passed, 0 failed.
 Phase 2 live checks passed against the in-memory reference ledger (section P2) AND through the **real Fabric network** (section P2-F).
 Phase 1 live checks (sections 2-8 below) were run 2026-09-22 and are unchanged.
 
 Secrets are never written in this file: commands use environment-variable references.
+
+## P3. Phase 3: status, custody, cases (D1-D3, E1, E2) — run 2026-09-22
+
+Environment: default (Fabric) profile app on `localhost:8080`; `FabricLedgerService` -> `peer0.org1` (Org1MSP), channel `crimechannel`,
+chaincode `evidence` **v1.2 seq 3**, both orgs endorsing; PostgreSQL 16 container on 5433 (Flyway applied `V2 cases` at startup); Kubo in `--offline` mode.
+**Not run, by owner decision:** single-org endorsement failure, orderer outage, peer failover, load (docs/KNOWN_GAPS.md A). **E3 and A2 are not built** (see below).
+
+### P3.1 Automated Java tests: `./mvnw -o test`
+```
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0  config.JwtPropertiesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  controller.EvidenceControllerTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  controller.Phase3ControllersTest
+Tests run: 20, Failures: 0, Errors: 0, Skipped: 0  ledger.FabricLedgerServiceTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.HealthIndicatorsTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerServiceTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerTransferTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  security.JwtServiceTest
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0  security.SecurityAndErrorFormatTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0  service.AuthServiceTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
+Tests run: 26, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  service.HashingInputStreamTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0  service.LifecycleServicesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  storage.HttpIpfsClientTest
+Tests run: 171, Failures: 0, Errors: 0, Skipped: 0
+```
+New in Phase 3: `InMemoryLedgerTransferTest` 9, `LifecycleServicesTest` 11, `Phase3ControllersTest` 9, `CaseServiceTest` 7, plus 5 new wire-format tests in
+`FabricLedgerServiceTest` (real v1.2 fixtures) = 41 more than the 130 of Phase 2. One run failed 1 test: the null-`transfer` finding, fixed (docs/bugs/ledger-record-without-transfer-key.md).
+
+### P3.2 Go chaincode tests: `go test -count=1 -v ./...` in `chaincode/evidence` (33 passed; full verbatim list in Appendix P3-G)
+
+### P3.3 Live Phase 3 through Spring -> real Fabric + PostgreSQL: `scripts/live/live_phase3.sh` (verbatim in Appendix P3-L)
+Highlights (all as expected): illegal status jumps 409/400; custody unchanged until the receiver accepts; only the named receiver can respond (the SENDER
+and a bystander both 403); AUDITOR can neither send nor receive; forged sender fields ignored; nine history entries, each with its own txId; an item from before
+transfers existed still reads; cases: duplicate number 409, non-working lead 400, COLLECTOR cannot manage cases 403, lead cannot be removed, no DELETE (405).
+**First run found a real bug:** `PUT /api/cases/{id}` with a new lead answered 500 (docs/bugs/case-lead-change-unique-violation.md). Fixed, app restarted, the whole
+script re-run; Appendix P3-L is the second (passing) run. Application log after the rerun: 0 `ERROR` lines, 0 script tracebacks.
+
+### P3.4 Regression: the whole Phase 2 checklist through Fabric on chaincode v1.2 (Appendix P3-R, `scripts/live/live_phase2.sh`)
+Compared with the earlier real-Fabric Phase 2 run (P2-F-D) after normalising ids, hashes, CIDs, tx ids, epoch numbers and timings:
+```
+102,103c102,103
+<    v1  CREATED           tx=TX..  at=2026-09-21T20:02:04.505840100Z  by=COLLECTOR reason=''
+<    v2  METADATA_UPDATED  tx=TX..  at=2026-09-21T20:02:06.896367500Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+---
+>    v1  CREATED           tx=TX..  at=2026-09-21T20:46:45.810238100Z  by=COLLECTOR reason=''
+>    v2  METADATA_UPDATED  tx=TX..  at=2026-09-21T20:46:48.224963900Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+```
+Only ledger timestamps differ: behaviour is identical (register/verify/TAMPERED/NOT_FOUND/versioning/disposal/roles/limits/IPFS outage).
+
+### P3.5 Fabric-only checks re-run (Appendix P3-E, `scripts/live/live_fabric_extra.sh`)
+Real txIds found on the peers' ledger (qscc), concurrent-update race (exactly one winner in 3 rounds), peer outage 503 and self-recovery.
+The first attempt printed `bash: line 1: /mnt/e/FINAL: No such file or directory` in F1: a script bug (the WSL path contained a space and was unquoted),
+fixed in `live_fabric_extra.sh`; Appendix P3-E is the rerun.
+
+### P3.6 Wire format: `chaincode/scripts/capture_wire_p3.sh` (real v1.2 peer output -> `src/test/resources/fabric/p3-*`)
+```
+4096 .
+4096 ..
+143 p3-error-forbidden-role.txt
+119 p3-error-invalid-state.txt
+3 p3-find-pending-after.json
+3 p3-find-pending-none.json
+44 p3-find-pending.json
+1049 p3-get-accepted.json
+715 p3-get-new.json
+963 p3-get-pending.json
+5309 p3-history.json
+132 p3-tx-result-accept.json
+133 p3-tx-result-initiate.json
+copied
+```
+Real refusals as the peer prints them: `FORBIDDEN_ROLE: Only the named receiver can respond to this transfer`, `INVALID_STATE: A transfer is already pending`.
+
+### P3.7 Not covered / not built
+E3 (evidence-case link, owner choice pending, docs/features/e1-e2-cases-and-officers.md); A2 (design only, Appendix P3-A is the CA spike it rests on, not an implementation);
+D4; a user-lookup endpoint; the four known gaps of KNOWN_GAPS section A.
 
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
@@ -872,4 +951,511 @@ removed-block
    health overall    -> DOWN | ledger: {'details': {'detail': 'The ledger network is not reachable'}, 'status': 'DOWN'}
    /api/auth/me still works (Postgres, not the ledger) -> 200
    after restarting the peer: GET evidence -> 200 (recovered after ~4 s, no app restart)
+```
+
+## Appendix P3-L. Phase 3 live run, verbatim (`scripts/live/live_phase3.sh`, second run after the case fix)
+
+```
+
+### D1 status state machine (analyst moves COLLECTED -> PROCESSING -> ANALYZED)
+   evidence EV-f6a00945-bef5-4333-808a-d39dd41dcc0e
+   -> 200 PROCESSING
+   status                   PROCESSING
+   version                  2
+   currentCustodian         f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   lastAction               STATUS_CHANGED
+   lastReason               sent to forensic lab
+   -> 200 ANALYZED
+   status                   ANALYZED
+   version                  3
+   currentCustodian         f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   lastAction               STATUS_CHANGED
+   lastReason               imaging complete
+   illegal jump ANALYZED -> RELEASED (skips ARCHIVED):   409  INVALID_STATE | Status cannot move from ANALYZED to RELEASED
+   backwards ANALYZED -> COLLECTED:                      409  INVALID_STATE | Status cannot move from ANALYZED to COLLECTED
+   straight to DISPOSED via status:                      400  INVALID_ARGUMENT | DISPOSED is only reachable through an approved disposal (B5)
+   stale version:                                        409  VERSION_CONFLICT | Expected version 1 but the record is at version 3
+   JUDGE tries to change status:                         403  ACCESS_DENIED | You do not have permission to perform this action
+   blank reason:                                         400  VALIDATION_FAILED | Request validation failed
+   legal step ANALYZED -> ARCHIVED (prosecutor):         200
+   status                   ARCHIVED
+   version                  4
+   currentCustodian         f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   lastAction               STATUS_CHANGED
+   lastReason               case file complete
+
+### D2 two-step custody transfer
+   evidence EV-3b346dad-0530-4adc-9695-ccb759cf565d (custodian = collector f47ff616-80f2-4b54-b128-3b1b3fb6b8d0)
+   initiate collector -> analyst:                        200
+   status                   COLLECTED
+   version                  2
+   currentCustodian         f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   lastAction               TRANSFER_INITIATED
+   lastReason               forensic analysis
+   -> custody has NOT moved yet (still the collector)
+   pending list for the ANALYST:
+      EV-3b346dad.. from f47ff616.. reason='forensic analysis' notes='sealed bag 7, seal intact' version 2
+   pending list for the COLLECTOR (sender):              200 -> 0 items
+   AUDITOR tries to initiate:                            403  ACCESS_DENIED | You do not have permission to perform this action
+   collector tries a 2nd transfer while one is pending:  409  INVALID_STATE | A transfer is already pending
+   prosecutor (not the receiver) tries to accept:        403  FORBIDDEN_ROLE | Only the named receiver can respond to this transfer
+   collector (the sender) tries to accept:               403  FORBIDDEN_ROLE | Only the named receiver can respond to this transfer
+   ANALYST accepts:                                      200
+   status                   COLLECTED
+   version                  3
+   currentCustodian         b9481c66-6f02-463e-9ca1-2fd45ccd0ca2
+   lastAction               TRANSFER_ACCEPTED
+   lastReason               forensic analysis
+   old custodian (collector) tries to hand it on:        403  FORBIDDEN_ROLE | Only the current custodian can transfer this evidence
+   new custodian (analyst) -> prosecutor:                200
+   prosecutor REJECTS:                                   200
+   status                   COLLECTED
+   version                  5
+   currentCustodian         b9481c66-6f02-463e-9ca1-2fd45ccd0ca2
+   lastAction               TRANSFER_REJECTED
+   lastReason               for court filing
+   analyst -> judge, then analyst CANCELS:               200 / 200
+   status                   COLLECTED
+   version                  7
+   currentCustodian         b9481c66-6f02-463e-9ca1-2fd45ccd0ca2
+   lastAction               TRANSFER_CANCELLED
+   lastReason               court custody
+   receiver checks:
+     to an AUDITOR (cannot hold evidence):               400  RECEIVER_CANNOT_HOLD_EVIDENCE | A user with role AUDITOR cannot hold custody of evidence
+     to an unknown user id:                              404  RECEIVER_NOT_FOUND | The receiving user does not exist or is inactive
+     to yourself:                                        400  INVALID_ARGUMENT | Custody cannot be transferred to yourself
+   forged sender field in the body is ignored (sender = token):
+     HTTP ok; custodian still b9481c66.. (analyst), lastAction TRANSFER_INITIATED
+
+### D3 custody timeline (built from the ledger history; each step has its own ledger txId)
+   users: collector=f47ff616.. analyst=b9481c66.. prosecutor=286529a7.. judge=e878852e..
+200   HTTP 200 (AUDITOR may read)
+   currentCustodian: b9481c66.. | pendingTransfer: None
+   v1  CUSTODY_STARTED     from=-          to=f47ff616.. after=f47ff616.. tx=a1fdfe5e40cc.. reason=None note=None
+   v2  TRANSFER_INITIATED  from=f47ff616.. to=b9481c66.. after=f47ff616.. tx=1076a0ab3351.. reason='forensic analysis' note=None
+   v3  TRANSFER_ACCEPTED   from=f47ff616.. to=b9481c66.. after=b9481c66.. tx=8e506bba48f2.. reason='forensic analysis' note='received intact, seal verified'
+   v4  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=550cd60f9d29.. reason='for court filing' note=None
+   v5  TRANSFER_REJECTED   from=b9481c66.. to=286529a7.. after=b9481c66.. tx=ddcebbe0695f.. reason='for court filing' note='not ready to receive'
+   v6  TRANSFER_INITIATED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=a7ff73266cb8.. reason='court custody' note=None
+   v7  TRANSFER_CANCELLED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=1c47480db09a.. reason='court custody' note='wrong court'
+   v8  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=e8150c6d8617.. reason='forged-sender probe' note=None
+   v9  TRANSFER_CANCELLED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=6335fc5c3240.. reason='forged-sender probe' note='probe done'
+   timeline of an item with NO transfers (E1):
+     events: ['CUSTODY_STARTED'] (status changes are not custody events)
+   unknown id: 404 EVIDENCE_NOT_FOUND | Evidence EV-00000000-0000-4000-8000-000000000000 does not exist
+   an item written BEFORE transfers existed (chaincode v1.1 era) still reads:  GET 200, timeline 200
+   no DELETE on these routes:  405 405
+
+### E1 create and manage cases (PostgreSQL, Flyway V2)
+   ADMIN creates FAB-P3-CASE-12514 with the collector as lead officer:  201
+   caseNumber               FAB-P3-CASE-12514
+   status                   OPEN
+   leadOfficerId            f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   members: [('f47ff616..', 'LEAD_OFFICER')]  createdBy: 54db3c70.. (admin, from the token)
+   same number again (different case):                    409  CASE_NUMBER_TAKEN | A case with this number already exists
+   lead officer is an AUDITOR:                            400  INVALID_LEAD_OFFICER | A user with role AUDITOR cannot lead a case
+   COLLECTOR tries to create a case:                      403  ACCESS_DENIED | You do not have permission to perform this action
+   bad case number:                                       400  fields: ['caseNumber', 'leadOfficerId']
+   any role can read: AUDITOR list 200, get 200; anonymous 401
+
+### E2 assign officers to the case, with a role on the case
+   add analyst as FORENSIC_ANALYST:                       200
+   add the same user again:                               409  ALREADY_A_MEMBER | This user is already on the case team
+   add someone as LEAD_OFFICER through members:           400  USE_LEAD_OFFICER_FIELD | The lead officer is set through the case's leadOfficerId, not as a member role
+   add prosecutor as PROSECUTOR, judge as OBSERVER:       200 / 200
+   team now: [('f47ff616..', 'LEAD_OFFICER'), ('b9481c66..', 'FORENSIC_ANALYST'), ('286529a7..', 'PROSECUTOR'), ('e878852e..', 'OBSERVER')]
+   COLLECTOR tries to add a member:                       403  ACCESS_DENIED | You do not have permission to perform this action
+   remove the judge from the team:                        200
+   remove the LEAD officer (must be refused):             400  CANNOT_REMOVE_LEAD_OFFICER | The lead officer cannot be removed; assign a different lead officer first
+   remove someone not on the team:                        404  NOT_FOUND | That user is not on this case team
+   change the lead officer to the prosecutor + rename:    200
+   title: Burglary at 12 High St (renamed) | lead: 286529a7.. | team: [('286529a7..', 'LEAD_OFFICER'), ('b9481c66..', 'FORENSIC_ANALYST'), ('f47ff616..', 'INVESTIGATOR')]
+   update with nothing to change:                         400  fields: ['atLeastOneChange']
+   DELETE a case (no such route):                         405
+   the case number is a valid ledger caseId (NOT enforced yet, E3): 201
+
+### Database (what is actually stored)
+       case_number    | status |              title               
+   -------------------+--------+----------------------------------
+    FAB-P3-CASE-12514 | OPEN   | Burglary at 12 High St (renamed)
+    FAB-P3-CASE-3680  | OPEN   | Burglary at 12 High Street
+   (2 rows)
+   
+       case_role     | count 
+   ------------------+-------
+    FORENSIC_ANALYST |     2
+    INVESTIGATOR     |     1
+    LEAD_OFFICER     |     2
+    PROSECUTOR       |     1
+   (4 rows)
+   
+    version |       description        | success 
+   ---------+--------------------------+---------
+    1       | users and refresh tokens | t
+    2       | cases                    | t
+   (2 rows)
+```
+
+## Appendix P3-G. Go chaincode tests, verbatim (`go test -count=1 -v ./...`, filtered to result lines)
+
+```
+--- PASS: TestCreateStoresVersionOneCollectedWithLedgerTimestampAndActor (0.00s)
+--- PASS: TestDuplicateIdIsRejected (0.00s)
+--- PASS: TestOnlyCollectorAndAnalystMayCreate (0.00s)
+--- PASS: TestDigitalNeedsFileFieldsAndPhysicalForbidsThem (0.00s)
+--- PASS: TestMalformedInputsAreRejected (0.00s)
+--- PASS: TestAnOrganisationOutsideTheAllowListCannotWrite (0.00s)
+--- PASS: TestUpdateBumpsVersionKeepsFileFieldsAndNeedsAReason (0.00s)
+--- PASS: TestStaleExpectedVersionIsRejected (0.00s)
+--- PASS: TestUpdateWithUnchangedCidOrUnknownIdOrWrongRoleFails (0.00s)
+--- PASS: TestStatusMovesForwardOnlyAndNeverToDisposed (0.00s)
+--- PASS: TestDisposalNeedsRequestThenJudgeApprovalThenFreezesTheRecordButKeepsIt (0.00s)
+--- PASS: TestRejectedDisposalLeavesTheRecordUsable (0.00s)
+--- PASS: TestTheApproverCannotBeTheRequester (0.00s)
+--- PASS: TestHistoryIsOldestFirstWithDistinctTxIdsEvenIfThePeerReturnsNewestFirst (0.00s)
+--- PASS: TestCidIndexFindsFileAndEveryMetadataCidAndSharedFiles (0.00s)
+--- PASS: TestARejectedCallChangesNothing (0.00s)
+--- PASS: TestEveryWriteEmitsOneEventWithOnlyIdentifiers (0.00s)
+--- PASS: TestNothingEverDeletes (0.03s)
+--- PASS: TestTheExportedFunctionSetIsExactlyTheApprovedOne (0.00s)
+--- PASS: TestRecordJsonKeysAreTheContractWithTheJavaSide (0.00s)
+--- PASS: TestContractMetadataGenerates (0.03s)
+--- PASS: TestOmitemptyFieldsAreAlsoOptionalInTheSchema (0.00s)
+--- PASS: TestInitiateOnlyByTheCurrentCustodianAndCustodyMovesOnlyOnAcceptance (0.00s)
+--- PASS: TestAcceptMakesTheReceiverCustodianAndTheyCanHandOnWhileTheOldCustodianCannot (0.00s)
+--- PASS: TestRejectLeavesCustodyWithTheSenderAndAllowsANewTransfer (0.00s)
+--- PASS: TestOnlyTheSenderCanCancelAndOnlyTheNamedReceiverCanRespond (0.00s)
+--- PASS: TestTheReceiverMustRespondWithTheRoleTheTransferWasAddressedTo (0.00s)
+--- PASS: TestRolesThatCannotHoldEvidenceAreRefusedEverywhere (0.00s)
+--- PASS: TestInitiateArgumentAndStateChecks (0.00s)
+--- PASS: TestATransferCannotStartWhileADisposalIsPendingOrAfterDisposal (0.00s)
+--- PASS: TestPendingListShowsOnlyWhatIsStillPendingTowardThatUser (0.00s)
+--- PASS: TestARecordWrittenBeforeCustodyTransfersExistedReadsAsNoneAndCanBeTransferred (0.00s)
+--- PASS: TestTheCustodyTimelineIsRecoverableFromHistory (0.00s)
+PASS
+ok  	blockevidence/evidence	0.317s
+```
+
+## Appendix P3-R. Phase 2 checklist through Fabric on chaincode v1.2 seq 3, verbatim (`scripts/live/live_phase2.sh`)
+
+```
+collector user id (from /api/auth/me): f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+
+### B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)
+HTTP 201
+   evidenceId                 EV-83e4946e-387d-4c31-b350-6e830e5622a3
+   status                     COLLECTED
+   version                    1
+   createdBy                  f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   currentCustodian           f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   fileCid                    bafkreid6mejfqa5pvsvymnl4nthxzvutstcoyjecpppju3fh6euuosagqm
+   fileSha256                 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   fileSize                   41
+   metadataAvailable          True
+   metadata.collectorId       f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   verification.status        NOT_CHECKED
+   -> local sha256 of the file : 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   -> ledger fileSha256        : 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   -> createdBy == collector id from JWT? YES
+   -> stored bytes fetched from IPFS by the file CID == original? YES
+
+### B1 register PHYSICAL evidence (no file)
+HTTP 201
+   evidenceId                 EV-424d2f51-9992-4bcd-867b-1163061399c7
+   evidenceType               PHYSICAL
+   fileCid                    None
+   fileSha256                 None
+   status                     COLLECTED
+   createdByRole              None
+
+### B3 retrieve by id, by file CID, by metadata CID
+200 HTTP by id (AUDITOR)
+   status                     COLLECTED
+   version                    1
+   metadata.description       Suspect phone image
+   verification.status        NOT_CHECKED
+200 HTTP by file CID
+   ids: ['EV-83e4946e-387d-4c31-b350-6e830e5622a3']
+200 HTTP by metadata CID
+404 HTTP by unknown CID
+   error                      NOT_FOUND
+404 HTTP unknown id
+   error                      NOT_FOUND
+
+### C2 verify untouched evidence
+200 HTTP
+   status                     VERIFIED
+   ledgerVersion              1
+   file.result                VERIFIED
+   file.expectedSha256        7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   file.actualSha256          7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   metadata.result            VERIFIED
+
+### C2 DELIBERATE CORRUPTION: change one word inside the file's block on the IPFS node's disk, then restart the node
+   -> block file on the node: /data/ipfs/blocks/NA/CIQH4YISLAB27LFLQY2XY3GPPTLJHFGE5QSIE666TJWKP4JJI5EANAY.data
+   -> before: LIVE-EVIDENCE-1790023571-original-content
+   -> after : LIVE-EVIDENCE-1790023571-0RIGINAL-content
+   -> IPFS still answers a cat for the same CID (content-addressing did NOT catch it):
+   ->    cat -> LIVE-EVIDENCE-1790023571-0RIGINAL-content
+200 HTTP verify
+   status                     TAMPERED
+   file.result                TAMPERED
+   file.expectedSha256        7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   file.actualSha256          5861cd7032bf610866f2ee97378e4df1c4667d3fdc15eb7062ec10b30804cbb2
+   metadata.result            VERIFIED
+200 HTTP GET ?verify=true
+   verification.status        TAMPERED
+   status                     COLLECTED
+
+### C2 NOT_FOUND: register another item, delete its file block from the node's disk, restart
+removed-block
+200 HTTP verify (206 ms)
+   status                     NOT_FOUND
+   file.result                NOT_FOUND
+   file.actualSha256          None
+   metadata.result            VERIFIED
+
+### B4 versioned update (ANALYST), old version stays readable, stale update rejected
+200 HTTP update v1->v2
+   version                    2
+   lastAction                 METADATA_UPDATED
+   lastReason                 Location corrected after audit
+   metadata.location          Locker 9
+   metadata.description       Wallet
+   metadata.metadataVersion   2
+   metadata.previousMetadataCid bafkreibfw5ybsuq4vagvs5hclcnddzun7gug3jkliul5ohwxl2ogrnksoi
+200 HTTP GET version 1 (old)
+   version                    1
+   metadata.location          Desk 2
+200 HTTP GET version 2
+   version                    2
+   metadata.location          Locker 9
+409 HTTP stale update (expectedVersion=1, record is at 2)
+   error                      VERSION_CONFLICT
+   message                    Expected version 1 but the record is at version 2
+400 HTTP blank reason
+   error                      VALIDATION_FAILED
+403 HTTP JUDGE update
+   error                      ACCESS_DENIED
+
+### C3 ledger history (tx ids and ledger timestamps)
+200 HTTP
+   v1  CREATED           tx=f0dd8433c6a17810..  at=2026-09-21T20:46:45.810238100Z  by=COLLECTOR reason=''
+   v2  METADATA_UPDATED  tx=ba53fee2f51c109e..  at=2026-09-21T20:46:48.224963900Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+
+### B5 disposal: request (PROSECUTOR) -> COLLECTOR cannot approve -> stale approval rejected -> JUDGE approves
+200 HTTP request disposal
+   status                     COLLECTED
+   version                    2
+   disposal.state             PENDING
+   disposal.reason            Case closed by order 42/2026
+   lastAction                 DISPOSAL_REQUESTED
+403 HTTP COLLECTOR approve
+   error                      ACCESS_DENIED
+409 HTTP JUDGE approve with stale version
+   error                      VERSION_CONFLICT
+200 HTTP JUDGE approve
+   status                     DISPOSED
+   version                    3
+   disposal.state             NONE
+   lastAction                 DISPOSAL_APPROVED
+   lastReason                 Order verified
+409 HTTP update after DISPOSED
+   error                      INVALID_STATE
+   message                    Evidence is DISPOSED and can no longer change
+200 HTTP the DISPOSED record is still readable
+   status                     DISPOSED
+   version                    3
+200   history entries still on ledger: [(1, 'CREATED'), (2, 'DISPOSAL_REQUESTED'), (3, 'DISPOSAL_APPROVED')]
+
+### C-02: there is no delete
+   DELETE /api/evidence/{id} as collector -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as admin -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as judge -> 405  METHOD_NOT_ALLOWED
+
+### A3 roles: who may register (403 for the rest)
+   collector -> 201
+   forensic-analyst -> 201
+   prosecutor -> 403
+   judge -> 403
+   auditor -> 403
+   admin -> 403
+
+### B2 upload limits and types
+   disallowed type (application/x-msdownload) -> 415  UNSUPPORTED_FILE_TYPE | File type 'application/x-msdownload' is not allowed
+   empty file for DIGITAL -> 400  FILE_REQUIRED
+   file on PHYSICAL evidence -> 400  FILE_NOT_ALLOWED
+   missing required metadata field -> 400  ['description', 'caseId']
+   60 MB file (limit 50 MB) -> 413  CONTENT_TOO_LARGE
+   20 MB file -> HTTP 201 in 3159 ms
+   -> local sha256 : 06b08db369286de4d99cc58feda3f53507c21ad3e7f6f7439500491857f57039
+   -> ledger sha256: 06b08db369286de4d99cc58feda3f53507c21ad3e7f6f7439500491857f57039   size=20000000
+200 HTTP verify of the 20 MB file
+   status                     VERIFIED
+   file.result                VERIFIED
+
+### F1 IPFS outage: ledger information survives, verify says 503 (not NOT_FOUND)
+200 HTTP GET during outage
+   status                     COLLECTED
+   version                    2
+   metadataAvailable          False
+   metadata                   None
+503 HTTP verify during outage
+   error                      STORAGE_UNAVAILABLE
+   message                    IPFS node not reachable while reading content
+   register during outage -> 503  STORAGE_UNAVAILABLE
+
+### G4 health with the reference ledger
+200 HTTP
+   overall: UP
+   ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+   ipfs   : {'status': 'UP'}
+```
+
+## Appendix P3-E. Fabric-only checks on v1.2, verbatim (`scripts/live/live_fabric_extra.sh`, rerun after the path-quoting fix)
+
+```
+
+### F1. Every txId the API reports is a real transaction on the peers' ledger (qscc GetTransactionByID)
+   evidence EV-925cee80-b55a-4e69-ba8f-e1ed547df373  API says: txId=8802bc064de0383d4558fd9b14cf4b9e4960f336b8a10e7d415fee03f82baa25  ledger timestamp=2026-09-21T20:48:29.564964400Z
+   qscc found -> #namespaces/fields/evidence/Sequence
+   qscc found -> 'EV-925cee80-b55a-4e69-ba8f-e1ed547df373
+   qscc found -> *EV~EV-925cee80-b55a-4e69-ba8f-e1ed547df373
+   qscc found -> CreateEvidence
+   qscc found -> EV-925cee80-b55a-4e69-ba8f-e1ed547df373
+   qscc found -> Org1MSP
+   a made-up txId -> Error: endorsement failure during query. response: status:500 message:"Failed to get transaction with id 0000000000000000000000000000000000000000000000000000000
+
+### F2. Concurrent updates to ONE record with the same expectedVersion (Fabric MVCC / version check): exactly one may win
+   round 1: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 2: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 3: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+
+### F3. Ledger outage: stop the Org1 peer the backend talks to
+   GET evidence      -> 503  LEDGER_UNAVAILABLE | The ledger network is not reachable
+   register          -> 503  LEDGER_UNAVAILABLE
+   health overall    -> DOWN | ledger: {'details': {'detail': 'The ledger network is not reachable'}, 'status': 'DOWN'}
+   /api/auth/me still works (Postgres, not the ledger) -> 200
+   after restarting the peer: GET evidence -> 200 (recovered after ~4 s, no app restart)
+```
+
+## Appendix P3-A. A2 spike against the real Fabric CA (design evidence only; nothing implemented). Two runs, verbatim
+
+Run 1 (`ca_spike.sh`): the escalation step printed blank lines because of a capture bug in the script (`tail -1`), and the revoke step used an invalid flag (`--reason`), so some UUID-named spike users were left unrevoked. Run 2 redid the escalation with full capture (five refusals, Error Code 71). Its own revoke step hit the same invalid flag for the user (see the output), so the leftovers were revoked by a separate cleanup script (`ca_cleanup.sh`) whose output was NOT saved to a file; the original identities (`admin`, `peer0`, `user1`, `org1admin`, `appUser`) were checked untouched afterwards. No spike script is in the repository.
+
+```
+
+### CA server facts (fabric-ca-server-config.yaml)
+49:crlsizelimit: 512000
+92:#  The gencrl REST endpoint is used to generate a CRL that contains revoked
+94:#  during gencrl request processing.
+96:crl:
+100:  expiry: 24h
+122:  maxenrollments: -1
+131:          hf.Registrar.Roles: "*"
+132:          hf.Registrar.DelegateRoles: "*"
+133:          hf.Revoker: true
+136:          hf.Registrar.Attributes: "*"
+187:      # named "hf.Revoker" with a value of "true" (because the boolean expression
+190:      #       - name: hf.Revoker
+202:      #       - name: hf.Registrar.Roles
+210:      # The value of the user's 'hf.Registrar.Roles' attribute is then computed to be
+240:   org1:
+250:#  the default expiration ("expiry" field) is "8760h", which is 1 year in hours.
+253:#  the default expiration ("expiry" field) is "43800h" which is 5 years in hours.
+260:#  the default expiration ("expiry" field) is "8760h", which is 1 year in hours.
+266:      expiry: 8760h
+271:           - crl sign
+CA version:  Version: v1.5.17
+
+### 1. enroll the CA registrar (bootstrap identity) -- creds not printed
+2026/09/21 20:20:04 [INFO] Stored Issuer revocation public key at /tmp/ca-spike/admin/msp/IssuerRevocationPublicKey
+registered identities before (id, type, affiliation, attrs):
+Name: admin, Type: client, Affiliation: , Max Enrollments: -1, Attributes: [{Name:hf.Revoker Value:1 ECert:false} {Name:hf.IntermediateCA Value:1 ECert:false} {Name:hf.GenCRL Value:1 ECert:false} {Nam
+Name: peer0, Type: peer, Affiliation: , Max Enrollments: -1, Attributes: [{Name:hf.EnrollmentID Value:peer0 ECert:true} {Name:hf.Type Value:peer ECert:true} {Name:hf.Affiliation Value: ECert:true}]
+Name: user1, Type: client, Affiliation: , Max Enrollments: -1, Attributes: [{Name:hf.EnrollmentID Value:user1 ECert:true} {Name:hf.Type Value:client ECert:true} {Name:hf.Affiliation Value: ECert:true}
+Name: org1admin, Type: admin, Affiliation: , Max Enrollments: -1, Attributes: [{Name:hf.EnrollmentID Value:org1admin ECert:true} {Name:hf.Type Value:admin ECert:true} {Name:hf.Affiliation Value: ECert
+Name: appUser, Type: client, Affiliation: org1.department1, Max Enrollments: 1, Attributes: [{Name:hf.EnrollmentID Value:appUser ECert:true} {Name:hf.Type Value:client ECert:true} {Name:hf.Affiliation
+
+### 2. register a LEAST-PRIVILEGE registrar (may register only clients, only the attribute 'role')
+Password: <redacted>
+2026/09/21 20:20:04 [INFO] Stored Issuer revocation public key at /tmp/ca-spike/reg/msp/IssuerRevocationPublicKey
+
+### 3. AS THAT REGISTRAR: register a user with attribute role=JUDGE:ecert (should succeed)
+Password: <redacted>
+
+### 4. AS THAT REGISTRAR: try to escalate (must be REFUSED): a second attribute, an 'admin' type, and a peer identity
+
+
+
+
+### 5. enroll the user; inspect the certificate the chaincode would receive
+2026/09/21 20:20:05 [INFO] Stored Issuer revocation public key at /tmp/ca-spike/user/msp/IssuerRevocationPublicKey
+subject=C = US, ST = North Carolina, O = Hyperledger, OU = org1 + OU = client + OU = department1, CN = <user-uuid>
+issuer=C = US, ST = North Carolina, L = Durham, O = org1.example.com, CN = ca.org1.example.com
+notBefore=Feb 24 16:42:00 2026 GMT
+notAfter=Sep 21 20:20:00 2027 GMT
+certificate attribute extension (OID 1.2.3.4.5.6.7.8.1), as the peer/chaincode sees it:
+                {"attrs":{"role":"JUDGE"}}
+key material files (names only): <hash>_sk  perms: 600
+
+### 6. second enrollment with the same one-time secret (--id.maxenrollments 1): must be refused
+
+
+### 7. revoke the user AS THE REGISTRAR, then the registrar; CA-side revocation is recorded
+
+2026/09/21 20:20:05 [INFO] Successfully revoked certificates: [{Serial:6df37ebed89694237c3bc44577b049066137deaf AKI:ae0d79f1afb226a4ef53cb7664fa5187d4a88024}]
+CRL available from the CA (would need to be added to the channel MSP config for PEERS to honour it):
+2026/09/21 20:20:05 [INFO] Successfully stored the CRL in the file /tmp/ca-spike/admin/msp/crls/crl.pem
+
+(temporary client homes removed)
+```
+
+Run 2 (`ca_spike2.sh`):
+
+```
+
+### 0. leftovers from the first spike (a2spike-*)?
+Name: a2spike-registrar-26498, Type: client, Affiliation: org1.department1, Max Enrollment
+(end list)
+
+### 1. new least-privilege registrar
+Password: <redacted>
+
+### 2. registrar escalation attempts (each must be REFUSED)
+a) extra attribute 'admin=true:ecert':
+Error: Response from server: Error Code: 71 - Authorization failure
+b) identity of type 'admin':
+Error: Response from server: Error Code: 71 - Authorization failure
+c) identity of type 'peer':
+Error: Response from server: Error Code: 71 - Authorization failure
+d) a registrar attribute (hf.Registrar.Roles=client):
+Error: Response from server: Error Code: 71 - Authorization failure
+e) affiliation outside the registrar's own (org2.department1 does not exist here; try root):
+Error: Response from server: Error Code: 71 - Authorization failure
+
+### 3. legitimate registration (role=JUDGE:ecert, one enrollment) then enroll requesting BOTH role and hf.EnrollmentID
+Password: <redacted>
+                {"attrs":{"hf.EnrollmentID":"<user-uuid>","role":"JUDGE"}}
+
+### 4. one-time secret: second enrollment must be refused
+Error: Response from server: Error Code: 20 - Authentication failure
+
+### 5. revoke the user (as the registrar) and clean up EVERY a2spike identity
+Error: unknown flag: --reason
+      --gencrl   Generates a CRL that contains all revoked certificates
+      --id.maxenrollments int        The maximum number of times the secret can be reused to enroll (default CA's Max Enrollment)
+   [a2spike-registrar-26498] 2026/09/21 20:20:49 [INFO] Successfully revoked certificates: []
+   [a2spike-registrar-26683] 2026/09/21 20:20:49 [INFO] Successfully revoked certificates: [{Serial:5ec402c7572a1b540519
+
+(temporary client homes removed)
 ```
