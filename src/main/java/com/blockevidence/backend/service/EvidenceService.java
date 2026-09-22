@@ -71,6 +71,11 @@ public class EvidenceService {
 
     private static final Logger log = LoggerFactory.getLogger(EvidenceService.class);
     private static final int MAX_METADATA_BYTES = 1024 * 1024;
+    // F5: mirrors sync.EventSyncListener's tier-1 local retry exactly (same attempt count and fixed delay,
+    // docs/G3_SYNC_DESIGN.md section 9) - a proven, already-approved shape for "a short, bounded retry burst
+    // on a transient failure", reused here rather than inventing a second retry policy.
+    private static final int LEDGER_WRITE_RETRY_ATTEMPTS = 3;
+    private static final long LEDGER_WRITE_RETRY_DELAY_MS = 200;
 
     private final LedgerService ledger;
     private final IpfsClient ipfs;
@@ -162,7 +167,7 @@ public class EvidenceService {
                     contentKeys.wrapBestEffort(evidenceId, member.getUserId(), eck);
                 }
             }
-            ledger.createEvidence(new LedgerNewEvidence(evidenceId, request.caseId(), request.type(), document.cid(),
+            createEvidenceWithRetry(new LedgerNewEvidence(evidenceId, request.caseId(), request.type(), document.cid(),
                     document.sha256(), stored == null ? null : stored.cid(), stored == null ? null : stored.sha256(),
                     stored == null ? null : stored.size()), actor);
         } catch (RuntimeException e) {
@@ -173,6 +178,41 @@ public class EvidenceService {
         // of truth) regardless of what happens next; this just makes it findable from the case (E3).
         caseLinks.save(new CaseEvidenceLink(caseFile.getId(), evidenceId, user.userId(), clock.instant()));
         return get(evidenceId, false, user);
+    }
+
+    /**
+     * F5: retries ONLY on a genuine Fabric-level MVCC read conflict
+     * ({@link LedgerErrorCode#CONCURRENT_WRITE_CONFLICT}) - that transaction never committed (design note on the
+     * enum itself), so resubmitting the EXACT SAME arguments is safe, and {@code evidenceId} is a fresh
+     * server-generated id no other write could ever contend for (confirmed by reading the chaincode:
+     * {@code CreateEvidence} reads/writes only keys derived from this call's own arguments, never a shared or
+     * pre-existing one). Any other {@link LedgerException} - including the chaincode's own
+     * {@code VERSION_CONFLICT} - is NOT retried: retrying a stale expectedVersion with the same arguments would
+     * just fail the same way again, and this call carries none anyway (creation has no prior version to be
+     * stale about). A caller of this method still gets {@link #compensate} on final failure, unchanged.
+     */
+    private void createEvidenceWithRetry(LedgerNewEvidence newEvidence, LedgerActor actor) {
+        for (int attempt = 1; attempt <= LEDGER_WRITE_RETRY_ATTEMPTS; attempt++) {
+            try {
+                ledger.createEvidence(newEvidence, actor);
+                return;
+            } catch (LedgerException e) {
+                if (e.ledgerCode() != LedgerErrorCode.CONCURRENT_WRITE_CONFLICT || attempt == LEDGER_WRITE_RETRY_ATTEMPTS) {
+                    throw e;
+                }
+                log.warn("ledger write retry {}/{} for {} after a concurrent write conflict", attempt,
+                        LEDGER_WRITE_RETRY_ATTEMPTS, newEvidence.evidenceId());
+                sleep(LEDGER_WRITE_RETRY_DELAY_MS);
+            }
+        }
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private StoredFile storeFile(MultipartFile file, List<String> pinned, byte[] eck) {

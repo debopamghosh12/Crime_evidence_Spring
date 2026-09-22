@@ -2,21 +2,25 @@
 
 <!-- Most recent session first. 5 lines per entry: date + did / left / broken / watch out for. -->
 
-## 2026-09-22 — Session 8 (Phase 5 started: F4 audited; F2/F3 built and fully verified live on real Fabric)
+## 2026-09-22 — Session 8 (Phase 5: F4 audited; F2/F3 and F5 built, verified live on real Fabric)
 - **Did:** audited F4 (no C-06 violation; one accepted residual - free-text reason/note fields could carry
   personal data, undocumented before, D-058). Designed F2/F3 (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md, approved
   with C-10 added first) and built it: `crypto/` package (AES-256-GCM content keys, RSA-2048 per-user wrapping,
   Flyway V6), ledger hashes now cover ciphertext so `VerificationService` needed zero changes, new `/file`
   download endpoint, `addMember`/`removeMember` re-wrap/revoke, transfer-receiver auto-wrap in `EventProcessor`.
-  226 Java tests (18 new, real RSA/AES round-trips). Live-verified end to end against real Postgres+IPFS
-  (encrypt-on-register, decrypt-for-authorised, 403 for others, add/remove-member access changes, download
-  round-trip, tamper detection) first against `memory-ledger`, then - after the owner approved reissuing the lost
-  Fabric CA registrar secret and the dev users' wallet secrets (D-060/D-061, same "identity modify" recovery
-  pattern `bootstrap_registrar.sh` already documents, no new access created) - against REAL Fabric: a real
-  chaincode write and the custody-transfer-receiver auto-wrap off G3's real event stream both confirmed (D-062).
-  **All of F2/F3 is now verified against real Fabric, real PostgreSQL and real IPFS.** Committed as `9445edf`
-  (F4 + the design/build; the docs updates recording the real-Fabric confirmation are a follow-up commit).
-- **Left:** F5, I1, L1-L3, K2 not started.
+  Live-verified end to end against real Postgres+IPFS (encrypt-on-register, decrypt-for-authorised, 403 for
+  others, add/remove-member access changes, download round-trip, tamper detection) first against
+  `memory-ledger`, then - after the owner approved reissuing the lost Fabric CA registrar secret and the dev
+  users' wallet secrets (D-060/D-061, same "identity modify" recovery pattern `bootstrap_registrar.sh` already
+  documents, no new access created) - against REAL Fabric: a real chaincode write and the custody-transfer-
+  receiver auto-wrap off G3's real event stream both confirmed (D-062). **All of F2/F3 verified against real
+  Fabric, real PostgreSQL and real IPFS.** Then built F5 (owner-approved deviations: a plain Java retry loop
+  instead of the spring-retry dependency, and scoped to `register()`'s `createEvidence` only - `update`/status/
+  transfer/disposal are NOT retried, since a genuine MVCC conflict there needs a re-read-rebuild step F5 didn't
+  ask for, not a blind resubmit; D-063). 232 Java tests total (18 F2/F3 + 6 F5, all new tests against real
+  crypto or a controlled failure sequence, none mocked-away). Committed: `9445edf` (F4 + F2/F3 build), `a656a52`
+  (docs recording the real-Fabric confirmation), F5 not yet committed - see Left.
+- **Left:** F5's code/docs are uncommitted (pending this session's own review pass); I1, L1-L3, K2 not started.
 - **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
   a fresh random master key had been generated for that run, but the collector's RSA private key was already
   persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
@@ -28,8 +32,8 @@
   reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
   session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
   session's scratchpad only, not the repo.
-- **Next session start:** proceed to F5 (Spring Retry on Fabric MVCC conflicts, extending D-024's pin cleanup).
-  No outstanding Fabric/wallet blocker remains from this session.
+- **Next session start:** proceed to I1 (chain-of-custody PDF report), then L1-L3/K2 last, per the owner's own
+  sequencing. No outstanding Fabric/wallet blocker remains from this session.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 

@@ -280,7 +280,7 @@ A request refused before/inside MVC:
     GlobalExceptionHandler.handleAuthenticationFailed (401, bad login) -> AuditService.recordDenied(AUTH_FAILED, ...)
     GlobalExceptionHandler.handleAccessDenied (403, @PreAuthorize)     -> AuditService.recordDenied(ACCESS_DENIED, ...)
 
-## 21. Envelope encryption (F2/F3) - currently being modified: register()/update()/get() paths above
+## 21. Envelope encryption (F2/F3), built and verified live against real Fabric
 
 ```
 POST /api/evidence (register), DIGITAL -> EvidenceController.register -> EvidenceService.register
@@ -323,3 +323,22 @@ sync.EventProcessor.apply, TRANSFER_INITIATED -> wrapForTransferReceiver
 
 GET /api/audit -> AuditController -> AuditLogRepository (Specification: userId/action/from/to), ADMIN/AUDITOR only
 ```
+
+## 22. Upload consistency and retry (F5)
+
+```
+POST /api/evidence (register) -> EvidenceService.register -> ... (F2 encryption steps, section 21, unchanged) ...
+    -> createEvidenceWithRetry(newEvidence, actor):
+        attempt 1: ledger.createEvidence(...)
+            success -> return
+            LedgerException, code == CONCURRENT_WRITE_CONFLICT, attempt < 3 -> sleep(200ms) -> attempt 2
+            LedgerException, code == CONCURRENT_WRITE_CONFLICT, attempt == 3 -> throw (exhausted)
+            LedgerException, any OTHER code (e.g. VERSION_CONFLICT) -> throw immediately, no retry
+    -> (outer try/catch, D-024 unchanged): any exception here -> compensate(pinned) -> rethrow
+
+FabricLedgerService.mapFailure -> FabricErrors.translate(text, transientIo, mvccCommit)
+    mvccCommit=true  -> LedgerErrorCode.CONCURRENT_WRITE_CONFLICT (F5, retriable - nothing committed)
+    chaincode text "VERSION_CONFLICT: ..." -> LedgerErrorCode.VERSION_CONFLICT (NOT retried - a real stale version)
+```
+Not extended to update()/status/transfer/disposal (docs/features/f5-upload-retry.md's "Scope" section) - each
+call site there still surfaces `CONCURRENT_WRITE_CONFLICT` as a plain 409 to the caller, same as before F5.

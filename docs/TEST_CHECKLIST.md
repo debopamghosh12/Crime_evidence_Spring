@@ -846,6 +846,45 @@ stream within the first one-second poll - not a stub, not a unit-test double. Th
 `memory-ledger` run above could not cover; **all of F2/F3 is now verified against real Fabric.**
 
 
+## P5-F5. Phase 5: upload consistency and retry (F5) — built and verified, 2026-09-22
+
+Extends D-024 (Phase 2, unchanged) with a bounded retry on a genuine Fabric-level MVCC read conflict, scoped to
+`register()`'s `createEvidence` call (docs/features/f5-upload-retry.md has the full "why only register()"
+reasoning, found by reading the chaincode, not assumed).
+
+**Unit tests (`EvidenceServiceRetryTest`, a Mockito-controlled `LedgerService` so the exact failure sequence is
+under test control):**
+```
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 4.926 s -- in com.blockevidence.backend.service.EvidenceServiceRetryTest
+```
+Covers: succeeds on the 2nd attempt after one `CONCURRENT_WRITE_CONFLICT`; succeeds on the 3rd and final attempt;
+exhausts all 3 and still propagates the failure; never retries a chaincode `VERSION_CONFLICT` (fails on attempt
+1); never retries an unrelated `ApiException`; `compensate()` still runs after retries are exhausted (D-024's
+unpin-only-if-unreferenced rule unchanged).
+
+**Full suite after F5:**
+```
+Tests run: 232, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+**Live regression against real Fabric/PostgreSQL/IPFS** (the genuine-conflict trigger itself could not be
+exercised live - see "Known limit" below): registered PHYSICAL evidence through the retry-wrapped path.
+```
+POST /api/evidence (collector, real Fabric) -> 201, evidence EV-fbe472cd-7316-47cd-acf0-c11a1676134e
+application log grep for "retry" or "ERROR": zero matches - createEvidenceWithRetry succeeded on attempt 1,
+fully transparent for the normal (non-conflict) case.
+```
+
+### Known limit in this run (see docs/features/f5-upload-retry.md)
+A genuine Fabric-level MVCC conflict could not be triggered live for `CreateEvidence` specifically: it reads and
+writes only keys derived from its own arguments (a fresh evidenceId, CID-index entries keyed by `(cid,
+evidenceId)`) - no other transaction could ever contend for the same key, confirmed by reading the chaincode.
+Contriving a collision would mean adding artificial shared state to the chaincode purely for a demonstration,
+which was not done. The retry MECHANICS are proven by the 6 unit tests above instead, with tighter control over
+the exact failure sequence than a live trigger could offer regardless.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

@@ -508,3 +508,28 @@ clean), IPFS file/metadata *content*.
   that need it - a real chaincode write, and the custody-transfer-receiver auto-wrap off G3's real Fabric event
   stream - both confirmed live (D-062). **All of F2/F3 is verified against real Fabric, real PostgreSQL and
   real IPFS; nothing remains verified only against a stand-in.**
+
+## 19. As built (Phase 5, F5): upload consistency and retry, 2026-09-22
+
+Extends D-024's pin-cleanup compensation (Phase 2, unchanged) with a bounded retry on a genuine Fabric-level
+MVCC read conflict, scoped to `EvidenceService.register()`'s ledger write specifically. Full account:
+docs/features/f5-upload-retry.md and DECISIONS D-063.
+
+- **New `LedgerErrorCode.CONCURRENT_WRITE_CONFLICT`**, distinct from the chaincode's own `VERSION_CONFLICT` -
+  `FabricErrors.translate`'s `mvccCommit` branch now returns it. Same HTTP 409 as `VERSION_CONFLICT`, so no
+  existing caller's behaviour changes; it exists so retry logic can check a code instead of message text.
+- **`EvidenceService.createEvidenceWithRetry`**: a plain Java loop (owner-approved, no new dependency - see
+  D-063 for why `spring-retry` was rejected), 3 attempts with a fixed 200ms delay, mirroring `sync.
+  EventSyncListener`'s tier-1 local retry exactly. Retries ONLY `CONCURRENT_WRITE_CONFLICT`; any other
+  `LedgerException`, including `VERSION_CONFLICT`, fails on the first attempt. Sits entirely inside the existing
+  pre-ledger try/compensate block, so `compensate()` still runs unchanged on final failure.
+- **Deliberately not extended to `update`/status/transfer/disposal**: each of those read-modify-writes the SAME
+  `recordKey(evidenceID)`, so a genuine MVCC conflict there is plausible, but retrying with the same
+  `expectedVersion` cannot help (the chaincode's own version check would then correctly reject it) - a
+  meaningful retry needs a re-read-rebuild step per call site, which is materially more than F5 asks for and was
+  not built (KNOWN_GAPS).
+- **Verified** with 6 focused unit tests against a Mockito-controlled `LedgerService` (the exact failure sequence
+  under test control) and a live regression against real Fabric (registration succeeds with zero retry lines,
+  confirming the wrapper is transparent for the normal case). A genuine MVCC conflict could not be triggered
+  live for `CreateEvidence` specifically - it reads/writes no key any other transaction could contend for
+  (confirmed by reading the chaincode) - documented as an accepted verification limit, not silently skipped.

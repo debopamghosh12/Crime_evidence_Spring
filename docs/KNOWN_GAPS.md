@@ -36,7 +36,8 @@ These were considered, judged out of scope for the final-year deliverable, and a
 | Gap | Status | Detail |
 |---|---|---|
 | **Orphaned IPFS pins** are possible when a register fails during a ledger outage (compensation refuses to unpin what it cannot confirm) | ACCEPTED by design; no reconciliation sweep | DECISIONS D-024, D-037 |
-| No automatic retry on Fabric MVCC conflicts (F5); a conflict is returned as 409 | NOT BUILT (Phase 5) | D-024 |
+| ~~No automatic retry on Fabric MVCC conflicts (F5)~~ | **BUILT 2026-09-22**, scoped to `register()`'s `createEvidence` call only (the one ledger write with no contended key, confirmed by reading the chaincode) - `update()`/status/transfer/disposal calls are NOT retried on a genuine MVCC conflict, since blindly resubmitting the same `expectedVersion` cannot help there (a meaningful retry would need a re-read-rebuild step per call site, not built) | D-063, docs/features/f5-upload-retry.md |
+| A genuine Fabric-level MVCC conflict could not be naturally triggered live for F5's verification - `CreateEvidence` has no contended key by design, so this is verified by 6 focused unit tests with a controlled ledger double, not a live trigger | ACCEPTED, documented rather than contrived | D-063 |
 | No scheduled integrity sweep (C5); verification is on demand only | NOT BUILT (stretch) | C2 write-up |
 | Chaincode events now consumed and synced to Postgres (G3, 2026-09-22); H1-H4 (search, dashboard, feed, notifications) still read nothing from the resulting schema yet | G3 BUILT, H1-H4 NOT BUILT | docs/features/g3-ledger-event-sync.md |
 | Ledger test data is permanent (Fabric ledgers cannot be edited): case ids `FAB-DIRECT`, `FAB-WIRE`, `FAB-LIVE-*`; channel height 48 -> 93 | ACCEPTED; recreating the network removes it | FABRIC_RUNBOOK section 7 |
@@ -45,7 +46,7 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 COMPLETE: G3, H1, H2, H3, H4, A6 (2026-09-22). Phase 5 in progress: F4 audited (2026-09-22, no violation found); F2, F3 built and fully verified live against real Fabric/PostgreSQL/IPFS (2026-09-22); F5, I1, L1-L3, K2 still open. A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
+Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 COMPLETE: G3, H1, H2, H3, H4, A6 (2026-09-22). Phase 5 in progress: F4 audited (2026-09-22, no violation found); F2, F3 built and fully verified live against real Fabric/PostgreSQL/IPFS (2026-09-22); F5 built (2026-09-22, scoped to register() only, see section C); I1, L1-L3, K2 still open. A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
 only through the dev seeder, all 6 of whom are now A2-enrolled (`scripts/fabric/enroll_users.sh`); a user added once A4 exists
 would need the same enrollment step run for them before their first write (docs/FABRIC_RUNBOOK.md section 8).
 

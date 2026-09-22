@@ -230,8 +230,9 @@ class FabricLedgerServiceTest {
     @Test
     void everyChaincodeCodeMapsToItsOwnLedgerErrorCode() {
         for (LedgerErrorCode code : LedgerErrorCode.values()) {
-            if (code == LedgerErrorCode.LEDGER_UNAVAILABLE || code == LedgerErrorCode.LEDGER_IDENTITY_MISSING) {
-                continue;   // raised on the Java side (A2), never returned by the chaincode
+            if (code == LedgerErrorCode.LEDGER_UNAVAILABLE || code == LedgerErrorCode.LEDGER_IDENTITY_MISSING
+                    || code == LedgerErrorCode.CONCURRENT_WRITE_CONFLICT) {
+                continue;   // raised on the Java side (A2/F5), never returned by the chaincode itself
             }
             String wire = "endorsement failure during invoke. response: status:500 message:\"" + code.name() + ": detail here\"";
             LedgerException e = FabricErrors.translate(wire, false, false);
@@ -254,9 +255,11 @@ class FabricLedgerServiceTest {
     }
 
     @Test
-    void anMvccCommitConflictBecomesAVersionConflict() {
+    void anMvccCommitConflictBecomesConcurrentWriteConflictNotVersionConflict() {
+        // F5: distinct from VERSION_CONFLICT on purpose - this one is safe to retry with the same arguments
+        // (nothing committed), unlike a chaincode-reported stale expectedVersion.
         LedgerException e = FabricErrors.translate("transaction commit failed MVCC_READ_CONFLICT", false, true);
-        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.VERSION_CONFLICT);
+        assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.CONCURRENT_WRITE_CONFLICT);
     }
 
     @Test

@@ -29,9 +29,11 @@ final class FabricErrors {
             return new LedgerException(LedgerErrorCode.valueOf(m.group(1)), m.group(2).trim());
         }
         if (mvccCommit) {
-            // Two writers touched the same record in the same block; the loser is told to re-read and retry.
-            return new LedgerException(LedgerErrorCode.VERSION_CONFLICT,
-                    "The record was modified concurrently; reload it and try again");
+            // Two writers touched the same key in the same block; the loser never committed, so nothing needs
+            // re-reading (F5) - CONCURRENT_WRITE_CONFLICT, not VERSION_CONFLICT: this is safe to retry with the
+            // exact same arguments, which a chaincode-reported stale expectedVersion is not.
+            return new LedgerException(LedgerErrorCode.CONCURRENT_WRITE_CONFLICT,
+                    "The transaction was invalidated by a concurrent write to the same record; retrying is safe");
         }
         if (transientIo) {
             return new LedgerException(LedgerErrorCode.LEDGER_UNAVAILABLE, "The ledger network is not reachable");

@@ -340,3 +340,40 @@ All 9 checks from `docs/features/f2-f3-envelope-encryption-key-management.md` no
 PostgreSQL and real IPFS. Fabric CA/wallet state as of this entry: `be-registrar` and all 6 dev users have a
 fresh, working secret (D-060/D-061); the dev users' `maxenrollments` is now `-1` (D-061), a deliberate deviation
 from A2's original `1`.
+
+## D-063 — F5: plain Java retry loop (no new dependency), scoped to register()'s createEvidence only (2026-09-22)
+Owner-approved deviation from FEATURE_LIST's literal "Spring Retry" tech note: chose a plain bounded retry loop
+(3 attempts, fixed 200ms delay) mirroring `sync.EventSyncListener`'s already-approved tier-1 local retry exactly
+(same constants, same shape), rather than adding `spring-retry` as a new dependency (C-04). Rejected Spring
+Retry: its declarative `@Retryable`/`SimpleRetryPolicy` matches by exception CLASS, not by inspecting a code
+inside the exception, so distinguishing a genuine Fabric-level MVCC conflict from the chaincode's own
+`VERSION_CONFLICT` (both `LedgerException`) would need a custom `RetryPolicy` anyway - at which point the
+library adds ceremony (an `@EnableRetry` context, and `register()` calling its own retried step would need to
+move to a separate bean method for AOP self-invocation to be proxied) without buying anything the plain loop
+does not already have, more simply and more testably.
+
+**Scope, found by reading the chaincode, not assumed:** retry is applied ONLY to `EvidenceService.register()`'s
+`ledger.createEvidence(...)` call. `CreateEvidence` (`chaincode/evidence/evidence.go`) reads and writes only keys
+derived from ITS OWN arguments - `recordKey(evidenceID)` (a fresh, server-generated UUID, never reused) and CID
+composite-index entries keyed by `(cid, evidenceID)` (distinct even when two DIFFERENT items share a CID, since
+the evidenceID differs) - so it has NO shared, contended key with any other transaction. A genuine Fabric-level
+MVCC read conflict on this specific call is therefore expected to be rare-to-never in practice, unlike the
+VERSIONED writes (update/status/transfer/disposal), which all read-modify-write the SAME `recordKey(evidenceID)`
+and could genuinely race. Retrying a versioned write blindly with the SAME `expectedVersion` after a real MVCC
+conflict would not help - the chaincode's own version check would then correctly reject it, since by the time
+retry's simulation runs the true current version has moved on; a MEANINGFUL retry there needs a re-read-rebuild
+step specific to each call site's semantics, which is materially bigger than F5's brief tech line and was not
+built. Documented as an explicit scope boundary (KNOWN_GAPS), not silently left out.
+
+New `LedgerErrorCode.CONCURRENT_WRITE_CONFLICT` (owner-approved) distinguishes the gateway-level, retriable case
+from the chaincode's own `VERSION_CONFLICT`, which is not - `FabricErrors.translate`'s `mvccCommit` branch now
+returns the new code. Both map to HTTP 409, so no existing caller's behaviour changes.
+
+**Live verification:** since `CreateEvidence` has no contended key, a genuine MVCC conflict could not be
+naturally triggered live (confirmed by the chaincode analysis above, not by trying and failing) - contriving one
+would mean adding artificial shared state to the chaincode, which is scope creep for a demonstration. Verified
+instead with 6 focused unit tests using a Mockito-controlled `LedgerService` (succeeds on attempt 2, succeeds on
+attempt 3, exhausts and propagates, never retries `VERSION_CONFLICT`, never retries an unrelated `ApiException`,
+compensation still runs after exhaustion) - real control over the exact failure sequence, which a live trigger
+could not have given anyway. A live regression check confirmed the wrapper is fully transparent in the normal
+case: registration against real Fabric succeeded with zero retry log lines.
