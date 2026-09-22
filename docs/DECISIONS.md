@@ -661,3 +661,34 @@ browser session as that user (custody moved: `currentCustodian` changed, `versio
 direct API call since the accepting tab was stuck on the alert() bug above), then initiated a transfer back and
 rejected it with a note (custody correctly stayed with the sender). Every step cross-checked against the real
 backend directly, not just trusted from the UI.
+
+## D-071
+
+**D-070's tests were against `memory-ledger`, not real Fabric - caught by the owner, re-verified against the
+real network before calling either "done."** The backend had been started with
+`SPRING_PROFILES_ACTIVE=dev,memory-ledger` (deliberately, for fast iteration while wiring the frontend's request
+shapes) and D-070's write-up said so, but never called that out as a gap needing a real-Fabric re-run before the
+checkpoint - the owner asked directly, plainly, and that's a fair catch: this project's own standard (every
+other phase re-verified against real Fabric before being called done) applies here too, frontend or not.
+
+**Found while re-establishing real-Fabric connectivity for this recheck:** the WSL Fabric network (peer0.org1,
+peer0.org2, orderer, 3 CAs) was already running, but `.env` had none of `FABRIC_TLS_CERT_PATH`/`FABRIC_CERT_PATH`/
+`FABRIC_KEY_PATH`/`FABRIC_WALLET_DIR` set - lost between sessions the same way other dev-only local state has
+been before (Session 8, this session's own DB_PASSWORD/DB_URL earlier). The per-user wallet (6 UUID-named
+identities, `cert.pem`+`key.pem` each) survived in this session's own scratchpad from the earlier real-Fabric
+F2/F3 work and was reused rather than re-enrolled - no new CA identity, no credential reissuance, matching this
+project's standing preference for the least-privileged recovery available. Wrote the resulting real values back
+to `.env` with **single quotes around every path** - a real bug found live: `set -a && source .env` (this
+session's own launch pattern) silently swallows unquoted backslashes as shell escape characters, so a UNC path
+written unquoted arrives at the JVM with every path separator stripped (`\\wsl.localhost\Ubuntu\...` becomes
+`wsl.localhostUbuntu...`) - `NoSuchFileException` with no indication the value was ever mangled. This is a real
+trap for any Windows-path-shaped env var loaded via `source` in this project's dev workflow, not specific to
+Fabric; worth remembering for any future `.env` value with backslashes.
+
+**Re-verified against real Fabric (`ledger` health: "chaincode evidence answering on channel crimechannel via
+localhost:7051 as Org1MSP"):** registered a new DIGITAL item through the frontend - `/verify` VERIFIED, and
+`/history` showed one real 66-hex-character transaction id (`ec24c39b...`), not a memory-ledger placeholder.
+Initiated a custody transfer through the frontend and accepted it as FORENSIC_ANALYST in a second session -
+`/history` shows three real, distinct transaction ids (CREATED, TRANSFER_INITIATED, TRANSFER_ACCEPTED), each
+with the correct real actor id/role and timestamp. Both the register and custody-transfer wiring are now
+confirmed against the same standard as every other phase in this project - not just memory-ledger.
