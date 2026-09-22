@@ -1,8 +1,171 @@
 # Handover
 
-<!-- Most recent session first. 5 lines per entry: date + did / left / broken / watch out for. -->
+> **This file has two parts.** The first, below, is a standing END-OF-PROJECT SUMMARY written when Phase 5
+> (K2) closed the last item of the 5-phase build order — read this first, it is the viva prep sheet. The
+> second part, further down, is the ORIGINAL SESSION LOG (most-recent-first, 5 lines per entry) kept intact
+> as the detailed, chronological record of how each decision and bug actually happened.
 
-## 2026-09-22 — Session 8 (Phase 5: F4 audited; F2/F3 and F5 built, verified live on real Fabric)
+---
+
+# END-OF-PROJECT SUMMARY (as of 2026-09-22, after K2)
+
+## 1. What was built
+
+All 5 phases of FEATURE_LIST.md's own "Suggested build order" table are complete. That order was designed to
+cover every P0 feature (24 of them) plus the P1/P2 features needed for a credible, demoable final-year system;
+it is **not** the same as all 58 features in FEATURE_LIST.md (see §2 and §3 for what's out of scope).
+
+| Phase | Features | Status | Key commits (tags) |
+|---|---|---|---|
+| 1 - Foundation | K1, K3, A1, A3, G1, F1, G4 | Done | `c1a4d4b` (`phase1-done`, pushed) |
+| 2 - Core evidence | B1-B5, C1-C3, G2 | Done | `9e159b5`/`7b814eb` (`phase2-done`, pushed) |
+| 3 - Custody and cases | D1-D3, E1-E3, A2 | Done | `0bde57c` (E3), A2 deployed live, (`phase3-done`, pushed) |
+| 4 - Off-chain sync | G3, H1-H4, A6 | Done | `52bc05b` (G3), `92df666` (H1-H4/A6) |
+| 5 - Finish | I1, F2-F5, L1-L3, K2 | Done | `9445edf`, `a656a52`, `e361dce`, `d071c4e`, `136920e`, `1e32604`, `50088b2` |
+
+Highlights, briefly, phase by phase:
+
+- **Phase 1** — JWT login + BCrypt (A1), role-checked method security (A3), the `LedgerService` interface that
+  every later phase built behind (G1) so the Fabric implementation is swappable in principle, IPFS client (F1)
+  and Actuator health (G4), plus the global validation/error-format contract (K1) and profile-based config (K3).
+- **Phase 2** — evidence registration with file upload and SHA-256 hashing (B1, B2, C1), versioned updates that
+  never overwrite history (B4), archive/dispose replacing DELETE entirely (B5, so **evidence is never deleted**
+  in this system — C-02/CLAUDE.md), the `verify` endpoint that re-hashes and compares against the ledger (C2),
+  and the real Go chaincode `evidence` (G2) that everything from here on actually writes to.
+- **Phase 3** — the status state machine (D1), two-step custody transfer with a pending list for the receiver
+  (D2), full custody timeline (D3), case management and officer assignment (E1-E2), evidence linked to a real
+  case entity instead of a free string (E3), and A2 — every ledger write is now signed with the calling user's
+  own Fabric-CA-issued identity, with the chaincode itself certificate-authoritative about who that is (not a
+  role string the backend could lie about).
+- **Phase 4** — a ledger event listener that syncs every chaincode write into Postgres idempotently and
+  replay-safely (G3), and everything built on top of that sync: search/filter (H1), dashboard analytics (H2),
+  an activity feed (H3), notifications including live tamper alerts (H4), and an access audit log that
+  distinguishes a normal view from `TOKEN_USED_AFTER_DEACTIVATION` (A6).
+- **Phase 5** — envelope encryption: every file gets its own AES-256-GCM content key, wrapped RSA-2048-OAEP
+  per authorised user, so a public IPFS CID alone reveals nothing (F2/F3); upload retry on genuine Fabric MVCC
+  conflicts (F5); a chain-of-custody PDF report built from ledger data alone, so it needs no content-decryption
+  access at all (I1); real unit-test gaps filled rather than padded for a coverage number (L1); Testcontainers
+  integration tests against a real Postgres (L2); a one-command Docker Compose demo for backend+Postgres+IPFS
+  (L3, Fabric deliberately kept as a documented separate WSL step — see §2); and full, annotation-driven Swagger
+  documentation plus a verified-live Postman collection covering every endpoint (K2).
+
+Every phase above was **verified live**, not just unit-tested — against a real Fabric network (except where §2
+notes otherwise), real PostgreSQL, and a real IPFS node — with the actual commands and actual output captured
+in `docs/TEST_CHECKLIST.md` and one `docs/features/<name>.md` write-up per feature (full list: `docs/features/`,
+32 files). 255 automated Java tests pass as of the last commit (`50088b2`).
+
+## 2. Known limitations
+
+These are accepted, documented gaps — not oversights found late. Full detail: `docs/KNOWN_GAPS.md`.
+
+- **Fabric is not containerized (L3).** An owner-requested risk assessment (grounded in reading
+  `fabric-samples/test-network/network.sh`'s own 684-line, multi-stage, retry-looped bootstrap, and this
+  project's own repeated Fabric CA/wallet fragility) concluded real risk of sinking time into a fragile
+  containerized Fabric setup for a final-year-project timeline. Fabric stays WSL-hosted, started separately
+  per `docs/FABRIC_RUNBOOK.md`; `docker compose up` alone covers backend+Postgres+IPFS.
+- **The `memory-ledger` reference profile has no persistence.** A backend container/process restart loses all
+  evidence data under that profile (Postgres-native data — users, cases — survives). It exists for fast local
+  development and CI-shaped tests, not as a production ledger; real Fabric has no such limit.
+- **The server-held master key (F2/F3, C-10) is a single point of compromise** for every user's content key.
+  No HSM or key rotation is in scope. If the master key is exposed, every encrypted file's confidentiality is
+  defeated, though the ledger's tamper-evidence (hashes over ciphertext) is unaffected.
+- **A2 solves per-user *signing* identity, not key custody.** The backend still holds every user's RSA private
+  key (for F2/F3 unwrapping) and Fabric wallet identity; a compromised backend host can still act as any user.
+  This was a known, named residual of A2's design from the start, not a regression.
+- **Single-instance assumptions**: the G3 ledger-event listener has no clustering/coordination (would race on
+  its Postgres checkpoint if ever run more than once); F5's retry covers only `register()`'s `createEvidence`
+  call, not `update`/status/transfer/disposal (those need a re-read-rebuild step on conflict, not a blind
+  resubmit, which F5 was not scoped to build).
+- **Search and audit have narrower coverage than their names suggest**: H1's free-text search matches only the
+  *current* version's reason field, not history; A6's audit log covers evidence view/download and
+  authentication events, not literally every endpoint; neither `audit_log` nor `notifications` has a retention
+  policy.
+- **No CI pipeline (L4)** — the 255-test suite and the Postman/Newman collection are both run manually, not on
+  every push.
+- **A4 (admin user management) and A5 (case-level read restriction) were never built** — they appear in no
+  phase of the build order. Users exist only via the dev seeder; a user added once A4 existed would need the
+  same Fabric enrollment step (`scripts/fabric/enroll_users.sh`) run for them before their first write.
+- **Everything else in FEATURE_LIST.md outside the 5-phase build order is unbuilt by design**, not by omission:
+  B6-B8 (bulk register, physical-evidence extra fields, tags/related-evidence), C4-C5 (ledger-side timestamps,
+  scheduled integrity sweep), D4-D5 (mandatory-reason validation beyond what's already enforced, explicit
+  current-custodian field), E4 (close/reopen cases), I2-I4 (QR labels, shareable verification link, electronic
+  records certificate), J1-J3 (dispute flag and reviewer-panel voting), K4-K6 (rate limiting, CORS/HTTPS
+  hardening, structured logging), L4 (CI). These are all P1/P2 "should have"/"stretch" items per
+  FEATURE_LIST.md's own priority table, explicitly deferred, not silently dropped.
+
+## 3. Future work
+
+FEATURE_LIST.md states this project's own scoping decision up front: *"The report describes Polygon, Chainlink
+VRF, a DAO Jury and Web3Auth, while the working prototype runs on Hyperledger Fabric... This list targets
+Fabric... Everything sits behind a `LedgerService` interface, so a Polygon implementation with web3j can be
+added later without changing the controllers."* That remains exactly true today — **nothing in this codebase
+uses Polygon, a DAO, or Web3Auth**; they are report-described, not-yet-built future work, and should be
+presented at the viva as such, not implied to exist:
+
+- **Polygon L2 deployment** — a second `LedgerService` implementation (e.g. via web3j) could sit behind the
+  same interface G1 already established; no controller, service, or DTO would need to change, since ledger
+  calls only ever go through that interface (CLAUDE.md's own hard constraint). Genuinely feasible given the
+  architecture, but zero code toward it exists.
+  A DAO Jury with token staking and automatic slashing ("Legal Ticket") — J1-J3 sketch a simplified,
+  backend-selected-reviewer-panel version of this on Fabric, itself unbuilt; a real DAO/on-chain-vote/slashing
+  design was never attempted.
+- **Chainlink VRF** for random jury selection — would only make sense once a jury/dispute mechanism (J1-J3)
+  exists at all; currently neither exists.
+- **Web3Auth hidden wallets** — this project uses BCrypt-hashed passwords plus JWT (A1) and CA-issued Fabric
+  certificates (A2) for identity; no wallet-based or social-login auth was attempted.
+- Also named in FEATURE_LIST.md's own future-work row, all equally unbuilt: a gasless relayer, Stripe fiat
+  subscriptions, and deepfake detection "for the oracle problem" (relevant to a DAO jury verifying real-world
+  claims, itself not built).
+- Nearer-term, more mundane future work that would matter more for a production deployment than any of the
+  above: A4/A5 (§2), an HSM or rotation strategy for the F2/F3 master key, a CI pipeline (L4), and containerizing
+  Fabric properly once there's time to do it without risking the demo.
+
+## 4. Where the strongest evidence is, for each P0 claim
+
+Every P0 feature has its own `docs/features/<id>-*.md` write-up (found/scoped/tried/verified, with real command
+output) unless noted otherwise below. This table is the fast index into that evidence for viva questions.
+
+| P0 | Claim | Strongest evidence |
+|---|---|---|
+| A1 | JWT login, BCrypt passwords | `AuthServiceTest`, `JwtServiceTest`; `docs/features/a1-jwt-login.md`; TEST_CHECKLIST P1 |
+| A2 | Per-user Fabric identity, not a backend-asserted role | `docs/A2_IDENTITY_DESIGN.md`; DECISIONS D-059/D-062; live chaincode write with per-user signing confirmed via `qscc` creator match, plus a rejected forged-identity attempt, both against real Fabric |
+| A3 | RBAC, checked in Spring and the chaincode | `SecurityAndErrorFormatTest`; `Permissions` class SpEL expressions; `docs/features/a3-rbac-scaffolding.md`; chaincode-side `authorise()` (A2) |
+| B1 | Register evidence, server-generated ID, metadata to IPFS | `EvidenceServiceTest`/`EvidenceControllerTest`; `docs/features/b1-register-evidence.md`; TEST_CHECKLIST P2 and P2-F (real Fabric) |
+| B2 | File upload with size/type limits | `docs/features/b2-file-upload.md`; TEST_CHECKLIST P2 §"B2 upload limits and types" (real 415/400/413 responses, a real 20 MB upload verified end to end) |
+| B3 | Retrieve by ID or CID | `EvidenceControllerTest`; `docs/features/b3-retrieve-evidence.md` |
+| B4 | Versioned update, never overwritten | `LifecycleServicesTest`; `docs/features/b4-versioned-metadata-update.md` |
+| B5 | Archive/dispose replaces delete | `docs/features/b5-archive-dispose.md`; TEST_CHECKLIST P2 disposal-flow sequence (403/409/200 real transitions, JUDGE-only approve); `DELETE` confirmed `405` |
+| C1 | SHA-256 hash at upload | `HashingInputStreamTest`; `docs/features/c1-sha256-file-hash.md` |
+| C2 | `/verify`, VERIFIED/TAMPERED/NOT_FOUND | `docs/features/c2-verify-endpoint.md`; TEST_CHECKLIST "F1 IPFS outage" and the Phase 2 real-tamper test (deliberate block corruption -> TAMPERED, deleted block -> NOT_FOUND) |
+| C3 | Full ledger history with tx IDs | `docs/features/c3-ledger-history.md`; cross-checked independently by I1's PDF report matching `/history` exactly |
+| D1 | Status state machine, invalid jumps rejected | `LifecycleServicesTest`; `docs/features/d1-status-state-machine.md` |
+| D2 | Two-step custody transfer | `InMemoryLedgerTransferTest`, `Phase3ControllersTest`; `docs/features/d2-custody-transfer.md`; `scripts/live/live_phase3.sh` against real Fabric |
+| D3 | Custody timeline with tx IDs | `docs/features/d3-custody-timeline.md`; I1's PDF report (independent cross-check against the same data) |
+| E1 | Case management | `CaseServiceTest`; `docs/features/e1-e2-cases-and-officers.md` |
+| E3 | Evidence linked to a real case entity | `docs/features/e3-evidence-case-link.md`; `EvidenceService.register` now requires an existing case (enforced, not advisory) |
+| F1 | IPFS integration, survives fetch failure | `HttpIpfsClientTest`; `docs/features/f1-ipfs-client.md`; TEST_CHECKLIST "F1 IPFS outage" (ledger info survives, verify returns 503 not NOT_FOUND) |
+| G1 | `LedgerService` abstraction | `docs/features/g1-ledger-service.md`; `FabricLedgerServiceTest` + `InMemoryLedgerServiceTest` (two real implementations behind one interface, proving the abstraction actually holds) |
+| G2 | Chaincode with role checks and status validation | `docs/features/g2-chaincode.md`; Go test suite (`evidence_test.go`, a fake-ledger harness); deployed and live-verified at each version (v1.1 seq 2 -> v1.2 seq 3 -> v1.3 seq 4) |
+| H1 | Search/filter/sort/paginate from Postgres | `SearchServiceTest`; `docs/features/h1-h4-search-dashboard-feed-notifications.md` |
+| K1 | Bean Validation + one global error format | `SecurityAndErrorFormatTest`; `docs/features/k1-error-format.md` |
+| K2 | OpenAPI/Swagger + Postman collection | `docs/features/k2-api-documentation.md`; DECISIONS D-068; TEST_CHECKLIST P5-K2 (Swagger UI zero console errors live in a browser; `/v3/api-docs` valid OpenAPI 3.1 with 0 missing summaries; 42/42 Postman requests via Newman, 3 consecutive clean runs) |
+| K3 | Config/profiles, no secrets in code | `docs/features/k3-configuration-and-secrets.md`; `application.yml` profiles, `.env.example` |
+| L1 | Unit tests across services/state-machine/RBAC/hashing | DECISIONS D-065; TEST_CHECKLIST P5-L1; 255 total automated tests, 0 failures, as of the final commit |
+
+Two P0-adjacent notes worth having ready for the viva: **B5's "no delete" claim is a hard constraint, not just a
+feature** — `DELETE /api/evidence/{id}` returns `405` for every role, verified explicitly (C-02, CLAUDE.md).
+And **C2/I1 together are the strongest demonstration of the encryption design's own soundness**: `/verify` and
+the PDF report both operate on ledger/hash data only and were confirmed, live, to produce identical results for
+a user with no content-decryption access as for one who has it — proving F2/F3's confidentiality layer doesn't
+compromise the tamper-evidence layer it sits on top of.
+
+---
+
+# ORIGINAL SESSION LOG (most recent first)
+
+<!-- 5 lines per entry: date + did / left / broken / watch out for. -->
+
+## 2026-09-22 — Session 8 (Phase 5 built straight through: F4, F2/F3, F5, I1, L1-L3, K2 — ALL FIVE PHASES NOW COMPLETE)
 - **Did:** audited F4 (no C-06 violation; one accepted residual - free-text reason/note fields could carry
   personal data, undocumented before, D-058). Designed F2/F3 (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md, approved
   with C-10 added first) and built it: `crypto/` package (AES-256-GCM content keys, RSA-2048 per-user wrapping,
@@ -35,23 +198,31 @@
   Verified L3 with a genuine cold start (`docker compose down -v` then `up --build`, 3m31s, all containers
   healthy, register/encrypt/verify all worked inside the containers) and found, live, a real limit: a backend
   container restart loses all `memory-ledger` evidence data (Postgres data survives) - documented in the compose
-  file itself. 255 Java tests total. Committed: `9445edf` (F4+F2/F3), `a656a52` (F2/F3 real-Fabric docs),
-  `e361dce` (F5), `d071c4e` (I1), `136920e` (L1); L2/L3 not yet committed - see Left.
-- **Left:** L2/L3's new files are uncommitted (pending this session's own review pass); K2 (springdoc/Postman)
-  not started - the last item.
-- **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
-  a fresh random master key had been generated for that run, but the collector's RSA private key was already
-  persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
-  across restarts against the same database, exactly like the JWT secret should not for auth but the master key
-  must for already-encrypted data).
+  file itself. Finally built K2: springdoc-openapi 2.8.6, real (not stub) `@Operation`/`@Tag` annotations
+  documenting F2/F3 encryption, the two-step transfer, disposal approval, and verify/report's no-content-key
+  property; rebuilt the Postman collection from scratch to cover every live endpoint across all 5 phases (42
+  requests); found and fixed 5 real bugs by actually running it via Newman (D-068). Verified live: Swagger UI in
+  a real browser (zero console errors), `/v3/api-docs` valid with 0 missing summaries, 3 clean Newman runs
+  (42/42, 0 failed, 20/20 assertions). 255 Java tests total, full regression re-run clean immediately before the
+  K2 commit. Committed: `9445edf` (F4+F2/F3), `a656a52` (F2/F3 real-Fabric docs), `e361dce` (F5), `d071c4e`
+  (I1), `136920e` (L1), `1e32604` (L2/L3), `50088b2` (K2). **This closes Phase 5 and the full 5-phase build
+  order - see the END-OF-PROJECT SUMMARY at the top of this file.**
+- **Left:** nothing in the 5-phase build order. Out-of-scope future work (A4/A5, L4/CI, Fabric-in-Compose,
+  master-key HSM/rotation, Polygon/DAO/Web3Auth) is listed in the END-OF-PROJECT SUMMARY §2-§3, not "left" in
+  the sense of blocking anything - it was never in scope for this build order.
+- **Fixed mid-session, not a standing issue:** the first real-Fabric F2/F3 attempt 500'd with
+  `AEADBadTagException` - a fresh random master key had been generated for that run, but the collector's RSA
+  private key was already persisted in Postgres under the EARLIER run's master key; fixed by reusing the same
+  key (it must stay stable across restarts against the same database, exactly like the JWT secret should not
+  for auth but the master key must for already-encrypted data).
 - **Watch out:** dev users' login passwords were reset via direct SQL to a new value during this session (the
   original seed password was unknown/lost the same way the wallet was); their Fabric CA `maxenrollments` is now
-  `-1` (unlimited), a deliberate deviation from A2's original `1` (D-061) so a future lost wallet does not
-  reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
-  session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
-  session's scratchpad only, not the repo.
-- **Next session start:** commit L2/L3, then build K2 (springdoc-openapi/Swagger UI + an updated Postman
-  collection with a baseUrl environment) - the last item in this phase. No outstanding Fabric/wallet blocker.
+  `-1` (unlimited), a deliberate deviation from A2's original `1` (D-061). The scratch wallet/env files and the
+  filled-in Postman environment (real `devSeedPassword`) used for live verification are in this session's
+  scratchpad only, never committed - the repo's `postman/BlockEvidence.postman_environment.json` keeps a
+  `REPLACE_ME` placeholder.
+- **Next session start:** no outstanding blocker. If extending this project further, read the END-OF-PROJECT
+  SUMMARY §2-§3 first for what's deliberately out of scope and why, before assuming something is a bug.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 
@@ -102,4 +273,3 @@
 - **Left:** Answer Q1–Q8 at the bottom of ARCHITECTURE.md, approve dependencies (§7), then build Phase 1 (K1, K3, A1, A3, G1, F1, G4); no code written yet.
 - **Broken:** Nothing built yet. Project is not a git repo (ROLLBACK.md has no revert target); Maven/Gradle not on PATH, so the project needs generating (start.spring.io or IntelliJ) first.
 - **Watch out:** A4 and A5 appear in no build phase yet Phase 1 needs users (Q5); CONSTRAINTS.md is still empty, so propose seed entries from the CLAUDE.md hard constraints.
-
