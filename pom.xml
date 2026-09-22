@@ -36,6 +36,9 @@
 		     declared explicitly (A2, DECISIONS D-047, approved A2-Q8/C-04) because FileWalletIdentityStore uses
 		     it directly to decrypt PKCS#8 wallet keys, so an upgrade elsewhere in the tree must not silently move it. -->
 		<bcpkix.version>1.85</bcpkix.version>
+		<!-- I1, owner-approved (C-04): OpenPDF, not iText - LGPL/MPL, free for any use, unlike modern iText
+		     (AGPL or commercial-licensed). -->
+		<openpdf.version>2.2.2</openpdf.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -99,6 +102,11 @@
 			<groupId>org.bouncycastle</groupId>
 			<artifactId>bcpkix-jdk18on</artifactId>
 			<version>${bcpkix.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf</artifactId>
+			<version>${openpdf.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>

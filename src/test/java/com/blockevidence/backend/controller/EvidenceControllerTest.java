@@ -72,6 +72,7 @@ class EvidenceControllerTest {
     @MockitoBean UserDetailsService userDetailsService;
     @MockitoBean com.blockevidence.backend.audit.AuditService auditService;
     @MockitoBean com.blockevidence.backend.service.SearchService searchService;
+    @MockitoBean com.blockevidence.backend.service.ReportService reportService;
 
     static final String ID = "EV-3f2b7c1e-9a4d-4b8e-8c11-0a1b2c3d4e5f";
     final UUID userId = UUID.randomUUID();

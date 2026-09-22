@@ -885,6 +885,59 @@ which was not done. The retry MECHANICS are proven by the 6 unit tests above ins
 the exact failure sequence than a live trigger could offer regardless.
 
 
+## P5-I1. Phase 5: chain-of-custody PDF report (I1) — built and verified live on real Fabric, 2026-09-22
+
+Design point confirmed before any code was written (docs/features/i1-chain-of-custody-report.md): the report
+needs no content decryption, so a Judge/Auditor never wrapped in for an item's content still generates it.
+
+**Unit tests** (`ReportServiceTest`, a real `InMemoryLedgerService` + real `FakeIpfsClient`, a genuine 5-step
+timeline, the generated PDF read back with OpenPDF's own `PdfTextExtractor`):
+```
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.791 s -- in com.blockevidence.backend.service.ReportServiceTest
+```
+Covers: every hash/tx-id/action/actor-id from a real 5-version timeline appears verbatim in the extracted PDF
+text, the free-text metadata description does NOT appear, a tampered component shows `TAMPERED`, and an unknown
+evidence id is a 404.
+
+**Full suite:**
+```
+Tests run: 235, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+**Live run against real Fabric** (`verify_i1.sh`): built a genuine 5-step timeline through the real API -
+register (PHYSICAL) -> status change (COLLECTED to PROCESSING) -> custody transfer initiate -> transfer accept
+-> disposal request - then generated the report **as the JUDGE role**, first confirming via
+`GET /api/evidence/{id}` that the judge held `metadataAvailable=false` (never wrapped in to decrypt this item).
+```
+POST /api/evidence (collector)                       -> 201, EV-b95961d9-9e0d-430b-8571-07cfe601036b
+POST .../status (analyst, v1->PROCESSING)             -> 200
+POST .../transfers (collector -> analyst, v2)         -> 200
+POST .../transfers/accept (analyst, v3)                -> 200
+POST .../disposal (prosecutor, v4)                     -> 200
+GET .../history                                        -> 5 real ledger entries, real tx ids
+GET .../report (as JUDGE)                              -> 200, application/pdf, 3932 bytes
+GET /api/evidence/{id} (as JUDGE, before generating)   -> metadataAvailable: False (confirmed, never wrapped in)
+```
+Extracting the PDF's text and comparing to the real `/history` response, line by line - every value an exact
+match:
+```
+v1 CREATED            f8bca3a96100d7c3ea3479cd8bd97886c2d8b6fd13ac1d82f440d821bb5a11e9   MATCH
+v2 STATUS_CHANGED     b8c8dbf31018cdbb6165677d98b96ad8dc18ea428c1a90106f12d9bf48b95d2d   MATCH
+v3 TRANSFER_INITIATED a3a73a94fa922cc28afd6269e837f887e53a5708e4d829b22e1fc2fd0dc8d8ca   MATCH
+v4 TRANSFER_ACCEPTED  47aca88a17707981c593e086b4fd8721fe5b0f2b01f0894a7d0c5e18293d4ba4   MATCH
+v5 DISPOSAL_REQUESTED abcc89f432028e9d2e19019e1b844e1c8c668c4abb1a062b222af28ffcc075e7   MATCH
+```
+Metadata CID/SHA-256 in the report also matched the register response exactly; the verification section showed
+`VERIFIED` with `expected == actual`. Confirms both the design point (a Judge with zero content access generated
+a full, correct report) and the owner's explicit ask (hashes/tx-ids in the PDF match the real ledger values).
+
+### Layout bug found and fixed (see DECISIONS D-064)
+The first attempt's 7-column table wrapped the 64-hex transaction id and the 36-char actor UUID mid-string -
+found by reading the generated PDF back with `PdfTextExtractor`, not by inspection. Fixed by splitting into a
+narrative timeline table and a dedicated wide actors/transaction-ids table before this live run.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

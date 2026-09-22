@@ -19,6 +19,7 @@ import com.blockevidence.backend.dto.VerificationResponse;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Permissions;
 import com.blockevidence.backend.service.EvidenceService;
+import com.blockevidence.backend.service.ReportService;
 import com.blockevidence.backend.service.SearchService;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -57,11 +58,14 @@ public class EvidenceController {
     private final EvidenceService evidenceService;
     private final AuditService audit;
     private final SearchService searchService;
+    private final ReportService reportService;
 
-    public EvidenceController(EvidenceService evidenceService, AuditService audit, SearchService searchService) {
+    public EvidenceController(EvidenceService evidenceService, AuditService audit, SearchService searchService,
+            ReportService reportService) {
         this.evidenceService = evidenceService;
         this.audit = audit;
         this.searchService = searchService;
+        this.reportService = reportService;
     }
 
     /** H1: caseId/status/type/officer/date-range/free-text filters, served from the G3 read model, not the ledger. */
@@ -126,6 +130,23 @@ public class EvidenceController {
         VerificationResponse response = evidenceService.verify(id);
         audit.recordAccess(id, true);
         return response;
+    }
+
+    /**
+     * I1: a chain-of-custody PDF built entirely from ledger/verification data (docs/features/i1-chain-of-custody-report.md)
+     * - never requires content decryption, so any role that can read evidence can generate it, wrapped in for
+     * F2/F3 or not. Always a DOWNLOAD (A6): it re-verifies content hashes to build the report.
+     */
+    @GetMapping("/" + ID + "/report")
+    @PreAuthorize(Permissions.READ_EVIDENCE)
+    public void report(@PathVariable String id, @AuthenticationPrincipal AuthenticatedUser user,
+            HttpServletResponse response) throws IOException {
+        byte[] pdf = reportService.generateChainOfCustodyReport(id, user);
+        response.setContentType("application/pdf");
+        response.setHeader("Content-Disposition", "attachment; filename=\"" + id + "-chain-of-custody.pdf\"");
+        response.setContentLength(pdf.length);
+        response.getOutputStream().write(pdf);
+        audit.recordAccess(id, true);
     }
 
     /**

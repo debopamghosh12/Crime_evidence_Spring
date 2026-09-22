@@ -342,3 +342,18 @@ FabricLedgerService.mapFailure -> FabricErrors.translate(text, transientIo, mvcc
 ```
 Not extended to update()/status/transfer/disposal (docs/features/f5-upload-retry.md's "Scope" section) - each
 call site there still surfaces `CONCURRENT_WRITE_CONFLICT` as a plain 409 to the caller, same as before F5.
+
+## 23. Chain-of-custody PDF report (I1)
+
+```
+GET /api/evidence/{id}/report -> EvidenceController.report -> ReportService.generateChainOfCustodyReport
+    ledger.getEvidence(evidenceId)          .............................. 404 if unknown
+    ledger.getHistory(evidenceId)           .............................. the FULL timeline, every version
+    verification.verify(record)             .............................. fresh result, no content key needed
+    -> OpenPDF Document: evidence details, hashes, timeline table, actors/tx-id table, verification result
+    -> byte[] PDF -> HttpServletResponse (application/pdf, Content-Disposition attachment)
+    -> audit.recordAccess(id, true)         .............................. A6, DOWNLOAD
+
+Never calls: contentKeys.unwrap, ipfs.read for the FILE, EvidenceMetadata parsing - ReportService has no
+dependency capable of reaching decrypted content (design point confirmed before I1 was built).
+```

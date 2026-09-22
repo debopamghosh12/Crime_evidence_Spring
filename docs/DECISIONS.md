@@ -377,3 +377,34 @@ attempt 3, exhausts and propagates, never retries `VERSION_CONFLICT`, never retr
 compensation still runs after exhaustion) - real control over the exact failure sequence, which a live trigger
 could not have given anyway. A live regression check confirmed the wrapper is fully transparent in the normal
 case: registration against real Fabric succeeded with zero retry log lines.
+
+## D-064 — I1: chain-of-custody PDF built only from LedgerService + VerificationService; OpenPDF (2026-09-22)
+Owner design point, confirmed before any code was written: the report must be producible with NO content
+decryption, so a Judge or Auditor never wrapped in for a given item's file/metadata (F2/F3) still generates the
+exact same report. `ReportService` is architecturally incapable of needing decrypted content, not just written
+to avoid it - its only dependencies are `LedgerService` and `VerificationService`; it has no
+`ContentKeyService`, `IpfsClient` or `EvidenceMetadata` reference at all. "Evidence details" is scoped to the
+ledger-native record (case, type, status, custodian, timestamps) - the off-chain metadata document's free-text
+description/location/notes is deliberately excluded, since that is the CONTENT F2/F3 protects, not a
+chain-of-custody fact; this is the same design line I3 already draws ("see integrity status only, without
+seeing the content").
+
+**New dependency (owner-approved, C-04): OpenPDF 2.2.2** (`com.github.librepdf:openpdf`), not modern iText -
+LGPL/MPL, free for any use, where iText 5+/7+ is AGPL or commercial-licensed. FEATURE_LIST named both as
+acceptable.
+
+**Found live, fixed before shipping:** the first layout crammed Version/TxID/Timestamp/Action/Actor/Role/Reason
+into one 7-column table on A4 portrait - both the 64-hex-character transaction id and the 36-character actor
+UUID wrapped mid-string, unreadable in the actual PDF (confirmed by reading the generated PDF back with
+`PdfTextExtractor` in a unit test, not just eyeballing it). Fixed by splitting into two tables: a narrative
+"custody timeline" (version/timestamp/action/role/reason) and a dedicated "actors and transaction ids" table
+giving the two long tokens the width they need to render on one line.
+
+**Verified:** 3 unit tests (`ReportServiceTest`, a real `InMemoryLedgerService` + real `FakeIpfsClient`, a
+genuine 5-step timeline - register/status-change/transfer-initiate/transfer-accept/disposal-request) read the
+generated PDF back with `PdfTextExtractor` and assert the ledger's own hashes, every transaction id, every
+action and every actor id appear verbatim, that the verification result is present, and that the excluded
+free-text description does NOT appear. A live run against real Fabric reproduced the same 5-step timeline
+through the API, then generated the report AS THE JUDGE (confirmed via `metadataAvailable=false` that they held
+no content key for this item) - the report generated successfully and every hash/tx-id/actor-id in the real PDF
+matched the real `/history` response exactly.

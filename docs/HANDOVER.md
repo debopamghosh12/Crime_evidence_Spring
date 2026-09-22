@@ -17,10 +17,15 @@
   Fabric, real PostgreSQL and real IPFS.** Then built F5 (owner-approved deviations: a plain Java retry loop
   instead of the spring-retry dependency, and scoped to `register()`'s `createEvidence` only - `update`/status/
   transfer/disposal are NOT retried, since a genuine MVCC conflict there needs a re-read-rebuild step F5 didn't
-  ask for, not a blind resubmit; D-063). 232 Java tests total (18 F2/F3 + 6 F5, all new tests against real
-  crypto or a controlled failure sequence, none mocked-away). Committed: `9445edf` (F4 + F2/F3 build), `a656a52`
-  (docs recording the real-Fabric confirmation), F5 not yet committed - see Left.
-- **Left:** F5's code/docs are uncommitted (pending this session's own review pass); I1, L1-L3, K2 not started.
+  ask for, not a blind resubmit; D-063). Then built I1 (chain-of-custody PDF, owner design point confirmed
+  first: `ReportService` depends ONLY on `LedgerService`/`VerificationService`, architecturally incapable of
+  needing decrypted content - new dependency OpenPDF 2.2.2, not iText, D-064); found and fixed a real layout bug
+  (long tx-ids/actor UUIDs wrapping mid-string in a cramped table, caught by reading the generated PDF back with
+  `PdfTextExtractor` in a unit test) before the live run. 235 Java tests total (18 F2/F3 + 6 F5 + 3 I1, all new
+  tests against real crypto, a controlled failure sequence, or a real reference-ledger timeline - none
+  mocked-away). Committed: `9445edf` (F4 + F2/F3 build), `a656a52` (F2/F3 real-Fabric docs), `e361dce` (F5); I1
+  not yet committed - see Left.
+- **Left:** I1's code/docs are uncommitted (pending this session's own review pass); L1-L3, K2 not started.
 - **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
   a fresh random master key had been generated for that run, but the collector's RSA private key was already
   persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
@@ -32,8 +37,8 @@
   reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
   session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
   session's scratchpad only, not the repo.
-- **Next session start:** proceed to I1 (chain-of-custody PDF report), then L1-L3/K2 last, per the owner's own
-  sequencing. No outstanding Fabric/wallet blocker remains from this session.
+- **Next session start:** proceed to L1-L3 (unit test gaps, Testcontainers, Docker Compose) then K2
+  (springdoc/Postman) last, per the owner's own sequencing. No outstanding Fabric/wallet blocker remains.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 
