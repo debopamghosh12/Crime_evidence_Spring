@@ -1,8 +1,10 @@
 # F2/F3: Envelope encryption and key management
 
-**FEATURE_LIST:** F2 (P1), F3 (P1). **Phase:** 5. **Status:** built per owner-approved design, verified live
-against real PostgreSQL + real IPFS with the `memory-ledger` reference ledger standing in for real Fabric (a
-lost operator credential blocked the real-Fabric leg - see "Known limits" below).
+**FEATURE_LIST:** F2 (P1), F3 (P1). **Phase:** 5. **Status:** built per owner-approved design, **all 9 checks
+verified live against real PostgreSQL, real IPFS and real Fabric** (D-059 first ran against `memory-ledger`
+after a lost operator credential blocked the real-Fabric leg; D-060/D-061 recovered it, D-062 confirms both
+previously-unconfirmed checks - an actual chaincode write and the custody-transfer-receiver auto-wrap off G3's
+real event stream - now pass for real).
 
 ## Design
 `docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md`, approved 2026-09-22 (Q1 as proposed: authorised = case members +
@@ -30,8 +32,10 @@ added and approved alongside the design, before any code was written.
   constructor/method signatures - 226 tests total, all passing.
 
 ## Live verification (TEST_CHECKLIST P5-F2F3)
-Real PostgreSQL (Flyway V6 applied cleanly) and real IPFS (`--offline`); ledger was `memory-ledger` (see Known
-limits). A DIGITAL evidence item registered as `collector` (the case's sole member at the time):
+Real PostgreSQL (Flyway V6 applied cleanly) and real IPFS (`--offline`). Checks 1-8 below first ran against
+`memory-ledger` (D-059); checks 9-10 (a real chaincode write, and the transfer-receiver auto-wrap) needed real
+Fabric and were confirmed afterward (D-060/D-061/D-062) once the Fabric CA registrar and the dev users' wallet
+were rebuilt. A DIGITAL evidence item registered as `collector` (the case's sole member at the time):
 ```
 Uploaded plaintext: 60 bytes.  Stored on IPFS: 88 bytes (exactly +28 = 12-byte IV + 16-byte GCM tag).
 Stored bytes == plaintext? False.  sha256(stored) == ledger fileSha256? True.
@@ -56,16 +60,26 @@ GET /verify: status=TAMPERED, file.result=TAMPERED, file.expectedSha256 == the l
 ```
 Every step matched the design's stated behaviour exactly.
 
+### Real Fabric (TEST_CHECKLIST P5-F2F3, D-060/D-061/D-062)
+The Fabric CA registrar credential and the dev users' wallet (both needed since A2) were lost between sessions;
+recovering them needed a CA identity-secret reissue, owner-approved and done via the CA bootstrap admin (same
+pattern `scripts/fabric/bootstrap_registrar.sh` already documents for a lost secret - no new access created,
+D-060/D-061). With the wallet rebuilt, the app was restarted with `SPRING_PROFILES_ACTIVE=dev` (real
+`FabricLedgerService`, real G3 listener against the real chaincode event stream) and the two checks the
+`memory-ledger` run could not cover both passed:
+```
+9. Real chaincode write: POST /api/evidence -> a real evidence record; GET .../history shows a real 64-hex-char
+   Fabric transaction id (90549b39...981128), not a stub.
+10. Custody-transfer-receiver auto-wrap off the real event stream: analyst starts metadataAvailable=False (not a
+    member, not yet the transfer receiver); collector initiates a transfer to them; within the FIRST one-second
+    poll afterward analyst's metadataAvailable flips to True and their /file download matches the original
+    upload byte-for-byte - sync.EventProcessor.wrapForTransferReceiver genuinely fired off a real
+    TRANSFER_INITIATED chaincode event, not just in a unit test.
+```
+All 9 (10, counting the transfer check separately) items now hold against real Fabric, real PostgreSQL and real
+IPFS - no part of F2/F3 remains verified only against a stand-in.
+
 ## Known limits
-- **Live verification ran against `memory-ledger`, not real Fabric.** The Fabric CA registrar credential needed
-  to rebuild the per-user wallet (A2) was lost between sessions (the wallet directory lived outside the repo).
-  Recovering it needs a CA identity-secret reissue, which this session's permission policy refused as a
-  secret-store write - not something to route around. **Not yet proven against real Fabric:** an actual
-  chaincode write under this design, and the custody-transfer-receiver auto-wrap (it lives in
-  `sync.EventProcessor`, which only runs against `FabricLedgerService`'s real event stream -
-  `InMemoryLedgerService` has no event source, so G3 does not run under `memory-ledger`). DECISIONS D-059 has
-  the full account. Follow-up once the registrar is restored: `scripts/fabric/enroll_users.sh`, then repeat this
-  check against the real network.
 - **Revocation is not retroactive** (design section 8): removing a case member deletes their wrapped key row,
   it does not rotate the content key or re-encrypt content already on IPFS.
 - **The backend can decrypt everything** (CONSTRAINTS C-10): the master key is a single point of compromise for

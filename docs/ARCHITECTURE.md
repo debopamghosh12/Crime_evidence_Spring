@@ -502,8 +502,9 @@ clean), IPFS file/metadata *content*.
   non-member cannot (`metadataAvailable=false`, `/file` -> 403); adding the non-member as a case member grants
   them access live (`metadataAvailable` flips to `true`, `/file` now returns the exact original bytes);
   removing them revokes it again; a corrupted ciphertext byte on the real IPFS block still produces TAMPERED
-  from `verify()`, which never touched a content key. **Run against the `memory-ledger` reference ledger, not
-  real Fabric** - the operator-held Fabric CA registrar credential needed to rebuild the per-user wallet (A2) was
-  lost between sessions and reissuing it was refused by this session's own permission policy (a secret-store
-  write); real-Fabric confirmation of register/custody-transfer is a followup once the registrar is restored
-  (see HANDOVER). Real Postgres and real IPFS were used throughout; only the ledger is the stand-in.
+  from `verify()`, which never touched a content key. First run against `memory-ledger` (the operator-held
+  Fabric CA registrar credential needed to rebuild the per-user wallet, A2, was lost between sessions); the
+  registrar and dev-user wallet were then rebuilt (owner-approved, DECISIONS D-060/D-061) and the two checks
+  that need it - a real chaincode write, and the custody-transfer-receiver auto-wrap off G3's real Fabric event
+  stream - both confirmed live (D-062). **All of F2/F3 is verified against real Fabric, real PostgreSQL and
+  real IPFS; nothing remains verified only against a stand-in.**

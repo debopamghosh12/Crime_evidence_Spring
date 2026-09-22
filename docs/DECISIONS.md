@@ -292,3 +292,51 @@ InMemoryLedgerService implements no LedgerEventSource, so G3 never runs under me
 not be exercised live this session). Follow-up: once the registrar secret is restored (owner action, or an
 explicit approval for this session to do it), re-run scripts/fabric/enroll_users.sh and repeat the F2/F3 live
 check against the real network, specifically the transfer-receiver wrap.
+
+## D-060 — be-registrar's secret reissued via the CA bootstrap admin (2026-09-22)
+The registrar credential chosen at A2 time (docs/A2_IDENTITY_DESIGN.md) was lost between sessions (held only in
+an operator shell, never written down, per C-07) - the wallet it would rebuild was gone too. Owner-approved
+recovery, no new access created: enrolled the CA bootstrap admin (its secret read back from the running
+ca_org1 container's own start command via `docker inspect`, exactly as scripts/fabric/bootstrap_registrar.sh
+already does for a first-time setup - a read of something the operator's host access already exposes, not a
+new secret), then ran `fabric-ca-client identity modify be-registrar --secret <new>` as that admin (note: the
+flag is `--secret`, NOT `--id.secret` - `identity modify` takes the id positionally and rejects/ignores the
+`register`-style flag name; this was the first attempt's mistake, caught by the immediate `enroll` check
+failing with "Authentication failure"). Confirmed the new secret enrolls. be-registrar's own attributes
+(`hf.Registrar.Roles=client`, `hf.Registrar.Attributes=role`, `hf.Revoker=true`) are unchanged - this reissues
+its SECRET only, grants no new privilege, and is exactly the recovery path `bootstrap_registrar.sh`'s own
+"already registered" branch already documents for a lost secret.
+
+## D-061 — Dev users' wallet rebuilt via the same identity-modify pattern; maxenrollments set to -1, not 1 (2026-09-22)
+Owner-approved (a separate approval from D-060, since these are different CA identities): the 6 dev users were
+already registered on ca_org1 from an earlier session with their `role` attribute already granted, but their
+wallet (private keys) was gone and their one-time enrollment secret (`maxenrollments 1`, already consumed) could
+never be reused. Reissued each identity's secret as the CA admin (`fabric-ca-client identity modify <user-id>
+--secret <new>`), then enrolled immediately - no new CA identity created, no new role granted, same attributes
+as before. **Found live:** setting `--maxenrollments 1` again does NOT reset the CA's internal "already
+enrolled" counter for an identity that had already used its one enrollment - a fresh enroll with the new secret
+was still refused with a generic "Authentication failure" (error code 20), which does not read as an
+enrollment-limit error at all. Rejected staying at `1`: would have reproduced the exact same unrecoverable state
+the moment this wallet is lost again. Chose `--maxenrollments -1` (unlimited) instead, verified this enrolls
+successfully. This is a deliberate, dev/test-only deviation from A2's original `--id.maxenrollments 1` choice
+(`scripts/fabric/enroll_users.sh`); a production deployment would want a bounded re-enrollment budget instead of
+unlimited, but that is not this project's concern (CONSTRAINTS C-10's operational-key-management scope already
+excludes production hardening). Wallet written to a scratch directory outside the repo, matching the existing
+FABRIC_WALLET_DIR convention.
+
+## D-062 — F2/F3 confirmed live against REAL Fabric: chaincode write + transfer-receiver auto-wrap (2026-09-22)
+Follow-up to D-059 (which recorded F2/F3 verified only against `memory-ledger`), after D-060/D-061 restored the
+Fabric CA registrar and the dev users' wallet. Re-ran with `SPRING_PROFILES_ACTIVE=dev` (real
+`FabricLedgerService`, no `memory-ledger`), same master key as the earlier run (the collector's RSA keypair was
+already persisted in Postgres from that run - a fresh master key would have made it undecryptable, found live
+via `AEADBadTagException` before this was corrected). Both previously-unconfirmed checks now hold: (1) a real
+chaincode write - `POST /api/evidence` returned a real evidence record and `GET .../history` showed a real
+64-hex-character Fabric transaction id, not a stub; (2) the custody-transfer-receiver auto-wrap - the analyst
+started with `metadataAvailable=false` (not yet a member, not yet the transfer receiver), collector initiated a
+transfer to them, and within the FIRST one-second poll after that the analyst's `metadataAvailable` flipped to
+`true` and their `/file` download matched the original upload byte-for-byte - proving `sync.EventProcessor`'s
+`wrapForTransferReceiver` genuinely fires off G3's real Fabric chaincode-event stream, not just in a unit test.
+All 9 checks from `docs/features/f2-f3-envelope-encryption-key-management.md` now hold against real Fabric, real
+PostgreSQL and real IPFS. Fabric CA/wallet state as of this entry: `be-registrar` and all 6 dev users have a
+fresh, working secret (D-060/D-061); the dev users' `maxenrollments` is now `-1` (D-061), a deliberate deviation
+from A2's original `1`.

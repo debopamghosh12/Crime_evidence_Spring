@@ -750,12 +750,14 @@ building A4 (out of scope for Phase 4).
 
 ## P5-F2F3. Phase 5: envelope encryption and key management (F2, F3) — built and verified live, 2026-09-22
 
-**Read this first.** Real PostgreSQL 16 (Flyway V6 applied cleanly) and a real Kubo 0.43 node (`--offline`).
-The LEDGER is `InMemoryLedgerService` (profile `memory-ledger`), not real Fabric - see DECISIONS D-059 and
-docs/features/f2-f3-envelope-encryption-key-management.md for exactly why (a lost operator Fabric CA registrar
-credential, and this session's own permission policy refusing to reissue a CA secret). Real-chaincode writes
-and the custody-transfer-receiver auto-wrap are the one part of F2/F3 still unconfirmed live; everything else
-below is real.
+**Read this first.** Real PostgreSQL 16 (Flyway V6 applied cleanly) and a real Kubo 0.43 node (`--offline`)
+throughout. Checks 1-9 below first ran against `InMemoryLedgerService` (profile `memory-ledger`) because the
+Fabric CA registrar credential and the dev users' wallet were lost between sessions (DECISIONS D-059). Both
+were rebuilt owner-approved (D-060/D-061 - the same "identity modify" recovery pattern
+`bootstrap_registrar.sh` already documents, no new access created) and the run was repeated against REAL
+`FabricLedgerService`: a real chaincode write and the custody-transfer-receiver auto-wrap off G3's real event
+stream both passed (D-062, appended below as checks 10-11). **All of F2/F3 is now confirmed against real
+Fabric, real PostgreSQL and real IPFS.**
 
 **Java tests (226 total, up from 208 after H1-H4/A6):**
 ```
@@ -820,10 +822,28 @@ Every result matched the design's stated behaviour. `verify()`'s call path was c
 to never reach `ContentKeyService` (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md section 7) - this run demonstrates
 the OUTCOME (TAMPERED detected) that guarantee produces.
 
-### Known gap in this run (see docs/features/f2-f3-envelope-encryption-key-management.md)
-Not exercised: an actual write reaching the chaincode under A2's per-user identity scheme, and the
-custody-transfer-receiver auto-wrap (`sync.EventProcessor`, which requires the real Fabric event stream that
-`memory-ledger` does not provide). Follow-up once the Fabric CA registrar credential is restored.
+### Checks 10-11, verbatim, against REAL Fabric (D-060/D-061/D-062, `verify_f2_f3_real_fabric.sh`)
+```
+### 1. REAL CHAINCODE WRITE: register DIGITAL evidence as collector
+   evidence: EV-3a9518e0-7562-4f03-9050-d02d1f69e998
+
+### 2. confirm it is really on the Fabric ledger
+[{"version":1,"txId":"90549b394b5aa201d159b7dc620e83b47712d2d4e427f4eacedc2b8e24981128","action":"CREATED", ...}]
+
+### 3. custody transfer: collector initiates to analyst (NOT yet wrapped)
+   analyst metadataAvailable BEFORE transfer: False
+   (transfer initiated -> version 2, lastAction TRANSFER_INITIATED)
+
+### 4. waiting for G3's real Fabric event listener to process TRANSFER_INITIATED and auto-wrap the receiver
+   analyst metadataAvailable after transfer (poll attempt 1, ~1 second): True
+   description now visible to analyst: Real Fabric evidence
+
+### 5. analyst downloads the decrypted file - byte-exact
+   downloaded == original plaintext? True
+```
+A real 64-hex-character Fabric transaction id, and the receiver auto-wrap firing off the real chaincode event
+stream within the first one-second poll - not a stub, not a unit-test double. This closes the one gap the
+`memory-ledger` run above could not cover; **all of F2/F3 is now verified against real Fabric.**
 
 
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22

@@ -2,31 +2,34 @@
 
 <!-- Most recent session first. 5 lines per entry: date + did / left / broken / watch out for. -->
 
-## 2026-09-22 — Session 8 (Phase 5 started: F4 audited, F2/F3 built and live-verified against memory-ledger)
+## 2026-09-22 — Session 8 (Phase 5 started: F4 audited; F2/F3 built and fully verified live on real Fabric)
 - **Did:** audited F4 (no C-06 violation; one accepted residual - free-text reason/note fields could carry
   personal data, undocumented before, D-058). Designed F2/F3 (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md, approved
   with C-10 added first) and built it: `crypto/` package (AES-256-GCM content keys, RSA-2048 per-user wrapping,
   Flyway V6), ledger hashes now cover ciphertext so `VerificationService` needed zero changes, new `/file`
   download endpoint, `addMember`/`removeMember` re-wrap/revoke, transfer-receiver auto-wrap in `EventProcessor`.
-  226 Java tests (18 new, real RSA/AES round-trips). Live-verified against real Postgres+IPFS end to end
+  226 Java tests (18 new, real RSA/AES round-trips). Live-verified end to end against real Postgres+IPFS
   (encrypt-on-register, decrypt-for-authorised, 403 for others, add/remove-member access changes, download
-  round-trip, tamper detection on the real on-disk IPFS block) - **but the LEDGER was `memory-ledger`, not real
-  Fabric**, see Broken.
-- **Left:** F2/F3 uncommitted (per the owner's "commit separately" instruction, pending this session's
-  live-verification sign-off); F5, I1, L1-L3, K2 not started.
-- **Broken/blocked:** the Fabric CA registrar credential (`be-registrar`, A2) needed to rebuild the per-user
-  wallet was lost between sessions (wallet dir lived outside the repo); reissuing it needs a CA secret-store
-  write, which THIS session's own permission policy refused - not the owner, a tool-level classifier. Real-Fabric
-  writes (register, custody transfer) and the transfer-receiver auto-wrap (needs G3's real event stream, which
-  `memory-ledger` has none of) are UNCONFIRMED live. DECISIONS D-059 has the full account.
-- **Watch out:** dev users' passwords were reset via direct SQL to a new value during this session's live check
-  (the original seed password was unknown/lost the same way the wallet was) - `docker exec be-postgres psql ...`
-  with a fresh bcrypt hash; anyone continuing live verification needs to know this or reset again.
-- **Next session start:** to unblock real-Fabric verification, either the owner reissues `be-registrar`'s secret
-  themselves (`fabric-ca-client identity modify be-registrar --id.secret ... ` as the CA bootstrap admin, whose
-  secret is readable via `docker inspect ca_org1`) or explicitly approves this session doing it, then re-run
-  `scripts/fabric/enroll_users.sh` and repeat `docs/features/f2-f3-envelope-encryption-key-management.md`'s live
-  check. Otherwise: proceed to F5 as instructed, treating the real-Fabric leg as a tracked follow-up (KNOWN_GAPS).
+  round-trip, tamper detection) first against `memory-ledger`, then - after the owner approved reissuing the lost
+  Fabric CA registrar secret and the dev users' wallet secrets (D-060/D-061, same "identity modify" recovery
+  pattern `bootstrap_registrar.sh` already documents, no new access created) - against REAL Fabric: a real
+  chaincode write and the custody-transfer-receiver auto-wrap off G3's real event stream both confirmed (D-062).
+  **All of F2/F3 is now verified against real Fabric, real PostgreSQL and real IPFS.** Committed as `9445edf`
+  (F4 + the design/build; the docs updates recording the real-Fabric confirmation are a follow-up commit).
+- **Left:** F5, I1, L1-L3, K2 not started.
+- **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
+  a fresh random master key had been generated for that run, but the collector's RSA private key was already
+  persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
+  across restarts against the same database, exactly like the JWT secret should not for auth but the master key
+  must for already-encrypted data).
+- **Watch out:** dev users' login passwords were reset via direct SQL to a new value during this session (the
+  original seed password was unknown/lost the same way the wallet was); their Fabric CA `maxenrollments` is now
+  `-1` (unlimited), a deliberate deviation from A2's original `1` (D-061) so a future lost wallet does not
+  reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
+  session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
+  session's scratchpad only, not the repo.
+- **Next session start:** proceed to F5 (Spring Retry on Fabric MVCC conflicts, extending D-024's pin cleanup).
+  No outstanding Fabric/wallet blocker remains from this session.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 
