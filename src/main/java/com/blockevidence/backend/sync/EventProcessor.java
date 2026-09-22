@@ -6,6 +6,7 @@ import java.util.UUID;
 import com.blockevidence.backend.domain.EvidenceStatus;
 import com.blockevidence.backend.ledger.LedgerEvidenceEvent;
 import com.blockevidence.backend.ledger.LedgerEvidenceRecord;
+import com.blockevidence.backend.notification.NotificationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,13 +22,15 @@ public class EventProcessor {
     private final EvidenceActivityRepository activities;
     private final EvidenceProjectionRepository projections;
     private final LedgerSyncCheckpointRepository checkpoints;
+    private final NotificationService notifications;
     private final Clock clock;
 
     public EventProcessor(EvidenceActivityRepository activities, EvidenceProjectionRepository projections,
-            LedgerSyncCheckpointRepository checkpoints, Clock clock) {
+            LedgerSyncCheckpointRepository checkpoints, NotificationService notifications, Clock clock) {
         this.activities = activities;
         this.projections = projections;
         this.checkpoints = checkpoints;
+        this.notifications = notifications;
         this.clock = clock;
     }
 
@@ -49,6 +52,7 @@ public class EventProcessor {
                 record.status().name(), record.version(), record.currentCustodian(), record.createdBy(),
                 record.createdAt(), record.updatedAt(), record.lastAction().name(), record.lastReason());
         checkpoints.advance(event.blockNumber(), event.txId(), clock.instant());
+        notifications.notifyForEvent(event, record); // H4; never throws, see NotificationService
         return true;
     }
 

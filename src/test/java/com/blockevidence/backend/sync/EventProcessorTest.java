@@ -19,6 +19,7 @@ import com.blockevidence.backend.domain.EvidenceType;
 import com.blockevidence.backend.ledger.LedgerAction;
 import com.blockevidence.backend.ledger.LedgerEvidenceEvent;
 import com.blockevidence.backend.ledger.LedgerEvidenceRecord;
+import com.blockevidence.backend.notification.NotificationService;
 import org.junit.jupiter.api.Test;
 
 /** G3 (design docs/G3_SYNC_DESIGN.md section 5): the atomic unit of work. */
@@ -28,7 +29,8 @@ class EventProcessorTest {
     final EvidenceActivityRepository activities = mock(EvidenceActivityRepository.class);
     final EvidenceProjectionRepository projections = mock(EvidenceProjectionRepository.class);
     final LedgerSyncCheckpointRepository checkpoints = mock(LedgerSyncCheckpointRepository.class);
-    final EventProcessor processor = new EventProcessor(activities, projections, checkpoints, clock);
+    final NotificationService notifications = mock(NotificationService.class);
+    final EventProcessor processor = new EventProcessor(activities, projections, checkpoints, notifications, clock);
 
     LedgerEvidenceRecord record(int version) {
         return new LedgerEvidenceRecord("EV-1", "CASE-1", EvidenceType.PHYSICAL, EvidenceStatus.COLLECTED, version,

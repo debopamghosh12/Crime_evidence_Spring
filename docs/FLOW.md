@@ -249,3 +249,36 @@ EventSyncListener.run() (ApplicationRunner, on its own single-thread executor)
 ```
 `EventSyncHealthIndicator` reads `EventSyncListener`'s in-memory failure counter for `/actuator/health` component
 `eventSync`. Nothing else in the request-handling flow (sections 1-18) changes: G3 only reads the ledger.
+
+## 20. H1-H4 and A6
+
+```
+GET /api/evidence/search  -> EvidenceController.search -> SearchService -> EvidenceProjectionRepository (Specification)
+GET /api/dashboard        -> DashboardController -> DashboardService -> EvidenceProjectionRepository (aggregate)/
+                                                                          EvidenceActivityRepository (by-day aggregate)
+GET /api/activity         -> ActivityController -> ActivityService -> EvidenceActivityRepository (paged, ledger_at DESC)
+GET/POST /api/notifications -> NotificationController -> NotificationService -> NotificationRepository (own rows only)
+
+evidence_activity/projection writes (G3, section 6) -> EventProcessor.apply, after the checkpoint advance:
+    NotificationService.notifyForEvent(event, record)
+        TRANSFER_INITIATED   -> one notification, to record.transfer().to()
+        STATUS_CHANGED/DISPOSAL_* -> CaseFileRepository.findByCaseNumberIgnoreCase(record.caseId())
+                                     -> CaseMemberRepository -> one notification per member
+        anything else -> no notification
+
+EvidenceService.get/verify -> verification.verify(record) -> result.status()==TAMPERED?
+    -> NotificationService.notifyTamperAlert(evidenceId, caseId, currentCustodian)   (NOT a ledger event)
+
+Every authenticated request that reaches EvidenceController.get/verify:
+    -> AuditService.recordAccess(id, download?) -> UserRepository.findById(actor).enabled?
+        true  -> AuditAction.VIEW or DOWNLOAD
+        false -> AuditAction.TOKEN_USED_AFTER_DEACTIVATION   (Phase 1 access-token-lag, visibility only)
+
+A request refused before/inside MVC:
+    ApiAuthenticationEntryPoint (401, pre-DispatcherServlet) -> AuditService.recordDenied(AUTH_FAILED, ...)
+    ApiAccessDeniedHandler (403, pre-DispatcherServlet)      -> AuditService.recordDenied(ACCESS_DENIED, ...)
+    GlobalExceptionHandler.handleAuthenticationFailed (401, bad login) -> AuditService.recordDenied(AUTH_FAILED, ...)
+    GlobalExceptionHandler.handleAccessDenied (403, @PreAuthorize)     -> AuditService.recordDenied(ACCESS_DENIED, ...)
+
+GET /api/audit -> AuditController -> AuditLogRepository (Specification: userId/action/from/to), ADMIN/AUDITOR only
+```

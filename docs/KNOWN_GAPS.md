@@ -2,7 +2,7 @@
 
 **Purpose.** An honest list of what is NOT tested, NOT built, or only partly true, so the report and the demo claim nothing that
 was not done (FEATURE_LIST.md: "keep an honest split so nothing is claimed that is not built"). Every entry names where the detail
-lives. Last updated 2026-09-22 (Phase 3 complete; Phase 4 G3 built and owner-approved, H1-H4/A6 not yet). Update this file whenever a gap is closed or a new one is found; never delete an
+lives. Last updated 2026-09-22 (Phase 3 and Phase 4 both complete: G3, H1-H4, A6 all built, verified live and owner-approved). Update this file whenever a gap is closed or a new one is found; never delete an
 entry silently, mark it resolved with the date.
 
 ## A. Deliberately left UNTESTED (owner decision 2026-09-22)
@@ -42,7 +42,7 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 in progress: G3 built (2026-09-22); H1-H4, A6 not yet. Then Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
+Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 COMPLETE: G3, H1, H2, H3, H4, A6 (2026-09-22). Then Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
 only through the dev seeder, all 6 of whom are now A2-enrolled (`scripts/fabric/enroll_users.sh`); a user added once A4 exists
 would need the same enrollment step run for them before their first write (docs/FABRIC_RUNBOOK.md section 8).
 
@@ -52,6 +52,16 @@ G3 specifics:
 - **One `GetHistory` ledger read per event**, cost growing with an item's version count over its lifetime; a
   chaincode function returning one specific version would be more efficient but does not exist (out of scope, touches the chaincode).
 - **The `eventSync` health DOWN threshold (5 consecutive failures) is a fixed constant**, not configurable per environment.
+
+H1-H4/A6 specifics, all found while building them:
+- **H1's free-text search matches only the CURRENT `evidence_projection.last_reason`**, not any earlier version's reason
+  (found live, DECISIONS D-054) - the projection is a current-state table by design.
+- **A6's VIEW/DOWNLOAD auditing covers evidence access only** (`GET /api/evidence/{id}` and its verify variants), not
+  every read endpoint (search/dashboard/activity/cases).
+- **A6's IP address has no `X-Forwarded-For` handling**; behind a reverse proxy every entry would show the proxy's address.
+- **`audit_log` and `notifications` have no retention/purge policy**; both grow without bound, same class of gap as
+  `refresh_tokens` (ARCHITECTURE section 10).
+- **H4 email notifications are not built** (explicitly out of scope, no mail server configured, per the owner).
 
 
 Phase 3 specifics, all found while building it:
@@ -79,4 +89,8 @@ Phase 3 specifics, all found while building it:
   whole ledger from block 0, writes made directly to the chaincode while the application was fully stopped and
   correctly caught up (with no duplicates) on restart, a redundant restart producing no double-processing.
 - **Verified only against a fake or in-memory stand-in:** chaincode events; the Java service against an unavailable orderer/other org.
+H1-H4/A6 (Phase 4 complete) - search/filter/pagination, dashboard aggregates, the activity feed, notifications for a
+  transfer receiver, case members and a real live tamper alert, and A6's full set including the specific
+  deactivation-visibility demonstration the owner required (a real user deactivated mid-session, their still-valid
+  token's request produces a distinct TOKEN_USED_AFTER_DEACTIVATION row, not an ordinary VIEW).
 - **Not verified at all:** section A above, the A2 residuals in section B, and everything in sections B-D marked OPEN or NOT BUILT.

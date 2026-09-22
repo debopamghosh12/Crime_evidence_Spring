@@ -51,6 +51,7 @@ class LifecycleServicesTest {
     final UserRepository users = mock(UserRepository.class);
     final CaseFileRepository cases = mock(CaseFileRepository.class);
     final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
+    final com.blockevidence.backend.notification.NotificationService notifications = mock(com.blockevidence.backend.notification.NotificationService.class);
     final EvidenceService evidence = buildEvidenceService();
     final StatusService status = new StatusService(ledger, evidence);
     final CustodyService custody = new CustodyService(ledger, users, evidence);
@@ -60,7 +61,7 @@ class LifecycleServicesTest {
         ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
         lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
         return new EvidenceService(ledger, ipfs, new VerificationService(ipfs, clock), JsonMapper.builder().build(),
-                new UploadProperties(List.of("text/plain")), cases, caseLinks, clock);
+                new UploadProperties(List.of("text/plain")), cases, caseLinks, notifications, clock);
     }
 
     AuthenticatedUser user(Role role) {

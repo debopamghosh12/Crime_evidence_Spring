@@ -58,6 +58,7 @@ class SecurityAndErrorFormatTest {
     @Autowired JwtService jwtService;
     @MockitoBean AuthService authService;
     @MockitoBean UserDetailsService userDetailsService; // needed only to build the AuthenticationManager bean
+    @MockitoBean com.blockevidence.backend.audit.AuditService auditService;
 
     final UUID userId = UUID.randomUUID();
 

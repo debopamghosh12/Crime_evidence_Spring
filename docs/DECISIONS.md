@@ -207,3 +207,47 @@ An empty checkpoint (block_number IS NULL) means "start from block 0", not "star
 reflect ALL existing evidence on first startup, not only future writes, given the ledger already holds real data
 from every prior phase's live verification. Verified live: the first run against the real chain backfilled 164
 activity rows / 90 projection rows in one pass (TEST_CHECKLIST P4-G3).
+
+## D-054 — H1-H3 read only from the G3 projection; H1's free text matches CURRENT state, not history (2026-09-22)
+`SearchService`/`DashboardService`/`ActivityService` never call `LedgerService` (the whole point of G3): they query
+`evidence_projection`/`evidence_activity` via Spring Data JPA Specifications and native aggregate queries. Found
+live: H1's `q` filter matches `evidence_projection.last_reason`, which is the CURRENT reason only - a search for
+a word from an EARLIER version's reason (superseded by a later status change/disposal) correctly returns nothing,
+since the projection is a current-state table by design (D-051). Full-text search over history, if ever wanted,
+belongs against `evidence_activity` (H3), not H1; not built, since nothing asked for it.
+
+## D-055 — H4: notifications are written inside G3's own transaction; a tamper alert is not a ledger event (2026-09-22)
+`NotificationService.notifyForEvent` is called from `EventProcessor.apply` in the SAME transaction as the
+activity/projection/checkpoint write (design section 5): a rollback there discards the notification too, so there
+is no window where a notification exists for an event that was not actually committed. It never throws outward
+(a lookup failure, e.g. a caseId naming no real case, is logged and skipped) so a notification problem can never
+break evidence sync. `TAMPER_ALERT` is raised directly by `EvidenceService` the moment a verify call finds
+TAMPERED, independent of G3 entirely (chaincode events carry no such thing). TRANSFER_INITIATED notifies only the
+named receiver; STATUS_CHANGED/DISPOSAL_* notify every case member (via `CaseFileRepository`/`CaseMemberRepository`,
+looked up by the ledger's caseId string, same pattern as E3). Rejected: notifying on every action (CREATED,
+METADATA_UPDATED, TRANSFER_ACCEPTED/REJECTED/CANCELLED) - kept to the actions the design named, to avoid noise.
+
+## D-056 — A6: instrumented at 4 points, not one central filter; VIEW vs DOWNLOAD is the verify flag (2026-09-22)
+No AOP: the codebase has no existing AOP precedent, and only 2 controller methods need VIEW/DOWNLOAD
+instrumentation, so `AuditService.recordAccess` is called directly from `EvidenceController.get`/`verify` -
+simpler and more debuggable than a new aspect. `verify=true` (or the dedicated `/verify` endpoint, which always
+re-hashes) is logged as DOWNLOAD, since it is the one point the server actually re-fetches file bytes from IPFS;
+a plain GET is VIEW. Failed attempts are caught at 3 existing error-handling points
+(`ApiAuthenticationEntryPoint`, `ApiAccessDeniedHandler`, `GlobalExceptionHandler.handleAccessDenied`/
+`handleAuthenticationFailed`), not a new one, since those already own the definitive "this request failed"
+decision. `AuditService.currentIp()` uses `RequestContextHolder` (works inside MVC, e.g. the controller and
+`GlobalExceptionHandler`) but the two security-filter-chain handlers (`ApiAuthenticationEntryPoint`/
+`ApiAccessDeniedHandler`, which run BEFORE `DispatcherServlet`) pass the IP explicitly instead, since
+`RequestContextHolder` is not reliably populated that early.
+
+## D-057 — A6/Phase 1 pairing: TOKEN_USED_AFTER_DEACTIVATION checks user.enabled at audit-write time, not auth time (2026-09-22)
+Per the owner's instruction: `recordAccess` looks up the CURRENT `user.enabled` value (a fresh `UserRepository`
+read, not the JWT's claims, which say nothing about deactivation) every time it logs a VIEW/DOWNLOAD, and records
+`TOKEN_USED_AFTER_DEACTIVATION` instead when the user has since been disabled. This does not change what the
+request does (still 200; the access-token TTL gap from Phase 1 is not being fixed here) - only what gets logged.
+Verified live end to end (not just the schema, per the owner's explicit instruction): a still-valid token's
+request after its owner was deactivated produced a `TOKEN_USED_AFTER_DEACTIVATION` row, distinguishable in the
+same query from the ordinary `VIEW`/`DOWNLOAD` rows the SAME user's earlier, pre-deactivation requests produced
+(TEST_CHECKLIST P4-A6). No A4 (admin user management) endpoint exists yet to deactivate a user through the API,
+so the live check used a direct SQL `UPDATE users SET enabled=false` - exactly what A4 would eventually do,
+without building A4 itself (out of scope for Phase 4).

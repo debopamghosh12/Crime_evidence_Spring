@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -35,4 +37,13 @@ public interface EvidenceActivityRepository extends JpaRepository<EvidenceActivi
     List<EvidenceActivity> findByEvidenceIdOrderByVersionAsc(String evidenceId);
 
     List<EvidenceActivity> findAllByOrderByLedgerAtDesc();
+
+    Page<EvidenceActivity> findByCaseIdOrderByLedgerAtDesc(String caseId, Pageable pageable);
+
+    Page<EvidenceActivity> findAllByOrderByLedgerAtDesc(Pageable pageable);
+
+    // H2: activity over the last N days, grouped by calendar day (Postgres does the truncation).
+    @Query(value = "select date_trunc('day', ledger_at) as d, count(*) from evidence_activity "
+            + "where ledger_at >= :since group by d order by d", nativeQuery = true)
+    List<Object[]> countByDaySince(@Param("since") Instant since);
 }

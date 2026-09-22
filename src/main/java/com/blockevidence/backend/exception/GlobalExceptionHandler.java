@@ -3,6 +3,8 @@ package com.blockevidence.backend.exception;
 import java.time.Instant;
 import java.util.List;
 
+import com.blockevidence.backend.audit.AuditAction;
+import com.blockevidence.backend.audit.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +27,21 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * <p>Extends ResponseEntityExceptionHandler so Spring's own MVC exceptions (malformed JSON, wrong
  * method, unknown path, unsupported media type ...) also come out as ApiError instead of Spring's
  * default ProblemDetail: every one of them funnels through handleExceptionInternal below.
+ *
+ * <p>A6: {@link #handleAuthenticationFailed} (bad login) and {@link #handleAccessDenied} (@PreAuthorize
+ * denial) also record an audit row; every other 401/4xx here is a validation/business error, not an access
+ * attempt worth auditing.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private final AuditService audit;
+
+    public GlobalExceptionHandler(AuditService audit) {
+        this.audit = audit;
+    }
 
     @Override
     protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
@@ -61,6 +73,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(AuthenticationFailedException.class)
     ResponseEntity<Object> handleAuthenticationFailed(AuthenticationFailedException ex, WebRequest request) {
+        audit.recordDenied(AuditAction.AUTH_FAILED, pathOf(request), ex.getMessage());
         return body(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", ex.getMessage(), request, List.of());
     }
 
@@ -68,6 +81,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     // catch-all below would turn a legitimate 403 into a 500.
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<Object> handleAccessDenied(AccessDeniedException ex, WebRequest request) {
+        audit.recordDenied(AuditAction.ACCESS_DENIED, pathOf(request), ex.getMessage());
         return body(HttpStatus.FORBIDDEN, "ACCESS_DENIED", "You do not have permission to perform this action",
                 request, List.of());
     }
@@ -92,8 +106,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static ResponseEntity<Object> body(HttpStatus status, String code, String message, WebRequest request,
             List<ApiError.FieldViolation> violations) {
-        String path = request instanceof ServletWebRequest swr ? swr.getRequest().getRequestURI() : "";
-        ApiError error = new ApiError(Instant.now(), status.value(), code, message, path, violations);
+        ApiError error = new ApiError(Instant.now(), status.value(), code, message, pathOf(request), violations);
         return ResponseEntity.status(status).body(error);
+    }
+
+    private static String pathOf(WebRequest request) {
+        return request instanceof ServletWebRequest swr ? swr.getRequest().getRequestURI() : "";
     }
 }

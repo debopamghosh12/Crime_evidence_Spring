@@ -18,6 +18,8 @@ public final class Permissions {
     public static final String MANAGE_CASES = "hasAnyRole('ADMIN', 'PROSECUTOR')";
     /** Any authenticated user. Case-level restriction (A5) is not built yet, see FEATURE_LIST.md. */
     public static final String READ_EVIDENCE = "isAuthenticated()";
+    /** A6: the audit log names users and IPs, so its own read access is narrower than evidence reads. */
+    public static final String READ_AUDIT_LOG = "hasAnyRole('ADMIN', 'AUDITOR')";
 
     private Permissions() {
     }

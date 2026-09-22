@@ -435,3 +435,26 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
   present with correct txIds and the checkpoint caught up after a restart, with zero duplicates; a further
   redundant restart with no new writes left every count unchanged. Full output: TEST_CHECKLIST P4-G3.
 - **Not built yet:** H1-H4 (read from this schema) and A6 (independent of it). Nothing in Phase 1-3 changed.
+
+## 17. As built (Phase 4, H1-H4, A6): off-chain sync consumers, 2026-09-22
+
+- **New `service/` classes** (read from G3's schema, never from `LedgerService`): `SearchService` (H1),
+  `DashboardService` (H2), `ActivityService` (H3). New `notification/` package (H4): `Notification`,
+  `NotificationType`, `NotificationRepository`, `NotificationService` - called from `sync.EventProcessor` (inside
+  its transaction) and directly from `EvidenceService` (tamper alerts, independent of G3). New `audit/` package
+  (A6): `AuditAction`, `AuditLog`, `AuditLogRepository`, `AuditSpecifications`, `AuditService`.
+- **Endpoint surface added:** `GET /api/evidence/search` (H1); `GET /api/dashboard` (H2); `GET /api/activity`
+  (H3); `GET /api/notifications`, `POST /api/notifications/{id}/read` (H4, always the caller's own); `GET
+  /api/audit` (A6, `Permissions.READ_AUDIT_LOG` = ADMIN/AUDITOR only - narrower than ordinary evidence reads).
+- **Flyway `V5__h_features.sql`**: `notifications`, `audit_log`.
+- **Touched, additively, with the owner's standing Phase-4 approval:** `EvidenceController` (gained `SearchService`
+  and `AuditService`, and two lines in `get`/`verify` recording VIEW/DOWNLOAD), `EvidenceService` (gained
+  `NotificationService`, and a tamper-alert check after `verification.verify`), `sync.EventProcessor` (gained
+  `NotificationService`, called after the checkpoint advance), `ApiAuthenticationEntryPoint`/
+  `ApiAccessDeniedHandler`/`GlobalExceptionHandler` (each gained `AuditService` and now records a denied-attempt
+  row). No Phase 1-3 BEHAVIOUR changed (verified: the whole Phase 2 checklist re-run, identical).
+- **Verified live** (docs/TEST_CHECKLIST.md P4-H): a case with two evidence items, a custody transfer, a status
+  change and a full disposal cycle, then H1 search by case/status/text/officer with pagination, H2 aggregate
+  counts, H3's ordered feed, H4 notifications for the transfer receiver and every case member plus a live tamper
+  alert (a corrupted IPFS block, `verify=true` -> TAMPERED -> notification), and A6's full set including the
+  specific deactivation-visibility demonstration the owner required.

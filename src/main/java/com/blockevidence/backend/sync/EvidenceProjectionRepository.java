@@ -4,11 +4,13 @@ import java.time.Instant;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface EvidenceProjectionRepository extends JpaRepository<EvidenceProjection, String> {
+public interface EvidenceProjectionRepository extends JpaRepository<EvidenceProjection, String>,
+        JpaSpecificationExecutor<EvidenceProjection> {
 
     /**
      * G3 (design section 5 step 3b): one atomic upsert-with-compare-and-set. {@code WHERE
@@ -36,4 +38,15 @@ public interface EvidenceProjectionRepository extends JpaRepository<EvidenceProj
             @Param("lastAction") String lastAction, @Param("lastReason") String lastReason);
 
     List<EvidenceProjection> findByCaseId(String caseId);
+
+    // H2: aggregate counts for the dashboard. Native so Postgres does the grouping, not the JVM.
+    @Query(value = "select status, count(*) from evidence_projection group by status", nativeQuery = true)
+    List<Object[]> countByStatus();
+
+    @Query(value = "select evidence_type, count(*) from evidence_projection group by evidence_type", nativeQuery = true)
+    List<Object[]> countByType();
+
+    @Query(value = "select case_id, count(*) from evidence_projection where case_id is not null group by case_id "
+            + "order by count(*) desc limit 20", nativeQuery = true)
+    List<Object[]> countByCaseTop20();
 }

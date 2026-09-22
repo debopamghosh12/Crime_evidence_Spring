@@ -30,6 +30,7 @@ import com.blockevidence.backend.ledger.LedgerNewEvidence;
 import com.blockevidence.backend.ledger.LedgerService;
 import com.blockevidence.backend.model.CaseEvidenceLink;
 import com.blockevidence.backend.model.CaseFile;
+import com.blockevidence.backend.notification.NotificationService;
 import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
 import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
@@ -69,10 +70,12 @@ public class EvidenceService {
     private final UploadProperties upload;
     private final CaseFileRepository cases;
     private final CaseEvidenceLinkRepository caseLinks;
+    private final NotificationService notifications;
     private final Clock clock;
 
     public EvidenceService(LedgerService ledger, IpfsClient ipfs, VerificationService verification, JsonMapper json,
-            UploadProperties upload, CaseFileRepository cases, CaseEvidenceLinkRepository caseLinks, Clock clock) {
+            UploadProperties upload, CaseFileRepository cases, CaseEvidenceLinkRepository caseLinks,
+            NotificationService notifications, Clock clock) {
         this.ledger = ledger;
         this.ipfs = ipfs;
         this.verification = verification;
@@ -80,6 +83,7 @@ public class EvidenceService {
         this.upload = upload;
         this.cases = cases;
         this.caseLinks = caseLinks;
+        this.notifications = notifications;
         this.clock = clock;
     }
 
@@ -191,7 +195,9 @@ public class EvidenceService {
 
     public EvidenceResponse get(String evidenceId, boolean verify) {
         LedgerEvidenceRecord record = load(evidenceId);
-        return toResponse(record, verify ? verification.verify(record) : VerificationResponse.notChecked(evidenceId));
+        VerificationResponse result = verify ? verification.verify(record) : VerificationResponse.notChecked(evidenceId);
+        alertIfTampered(record, result);
+        return toResponse(record, result);
     }
 
     public List<EvidenceResponse> findByCid(String cid) {
@@ -225,7 +231,18 @@ public class EvidenceService {
     }
 
     public VerificationResponse verify(String evidenceId) {
-        return verification.verify(load(evidenceId));
+        LedgerEvidenceRecord record = load(evidenceId);
+        VerificationResponse result = verification.verify(record);
+        alertIfTampered(record, result);
+        return result;
+    }
+
+    /** H4: a tamper alert is NOT a ledger event (G3 never sees it) - raised here, the moment a verify call
+     *  finds TAMPERED, independent of the sync pipeline. */
+    private void alertIfTampered(LedgerEvidenceRecord record, VerificationResponse result) {
+        if (result.status() == com.blockevidence.backend.domain.VerificationStatus.TAMPERED) {
+            notifications.notifyTamperAlert(record.evidenceId(), record.caseId(), record.currentCustodian());
+        }
     }
 
     // ------------------------------------------------------------------------------------------ B4

@@ -1,17 +1,24 @@
 package com.blockevidence.backend.controller;
 
+import java.time.Instant;
 import java.util.List;
 
+import com.blockevidence.backend.audit.AuditService;
+import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.domain.EvidenceType;
 import com.blockevidence.backend.dto.DisposalDecisionBody;
 import com.blockevidence.backend.dto.DisposalRequestBody;
 import com.blockevidence.backend.dto.EvidenceResponse;
+import com.blockevidence.backend.dto.EvidenceSearchResult;
 import com.blockevidence.backend.dto.HistoryEntryResponse;
+import com.blockevidence.backend.dto.PageResponse;
 import com.blockevidence.backend.dto.RegisterEvidenceRequest;
 import com.blockevidence.backend.dto.UpdateEvidenceRequest;
 import com.blockevidence.backend.dto.VerificationResponse;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Permissions;
 import com.blockevidence.backend.service.EvidenceService;
+import com.blockevidence.backend.service.SearchService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -46,9 +53,25 @@ public class EvidenceController {
     private static final String ID = "{id:EV-[0-9a-fA-F-]{36}}";
 
     private final EvidenceService evidenceService;
+    private final AuditService audit;
+    private final SearchService searchService;
 
-    public EvidenceController(EvidenceService evidenceService) {
+    public EvidenceController(EvidenceService evidenceService, AuditService audit, SearchService searchService) {
         this.evidenceService = evidenceService;
+        this.audit = audit;
+        this.searchService = searchService;
+    }
+
+    /** H1: caseId/status/type/officer/date-range/free-text filters, served from the G3 read model, not the ledger. */
+    @GetMapping("/search")
+    @PreAuthorize(Permissions.READ_EVIDENCE)
+    public PageResponse<EvidenceSearchResult> search(@RequestParam(required = false) String caseId,
+            @RequestParam(required = false) EvidenceStatus status, @RequestParam(required = false) EvidenceType type,
+            @RequestParam(required = false) String officer, @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to, @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sort) {
+        return searchService.search(caseId, status, type, officer, from, to, q, page, size, sort);
     }
 
     /** multipart/form-data: JSON part "metadata" and, for DIGITAL evidence, a binary part "file". */
@@ -61,11 +84,17 @@ public class EvidenceController {
         return evidenceService.register(metadata, file, user);
     }
 
-    /** {@code verify=true} also re-hashes the stored content (C2); the default does not, it is expensive. */
+    /**
+     * {@code verify=true} also re-hashes the stored content (C2); the default does not, it is expensive.
+     * A6: {@code verify=true} means the server fetched and re-hashed the actual file bytes, so it is audited
+     * as a DOWNLOAD; the default (metadata/ledger fields only) is a VIEW.
+     */
     @GetMapping("/" + ID)
     @PreAuthorize(Permissions.READ_EVIDENCE)
     public EvidenceResponse get(@PathVariable String id, @RequestParam(defaultValue = "false") boolean verify) {
-        return evidenceService.get(id, verify);
+        EvidenceResponse response = evidenceService.get(id, verify);
+        audit.recordAccess(id, verify);
+        return response;
     }
 
     @GetMapping("/by-cid/{cid}")
@@ -86,10 +115,13 @@ public class EvidenceController {
         return evidenceService.history(id);
     }
 
+    /** A6: always re-fetches and re-hashes the file, so this is always a DOWNLOAD. */
     @GetMapping("/" + ID + "/verify")
     @PreAuthorize(Permissions.READ_EVIDENCE)
     public VerificationResponse verify(@PathVariable String id) {
-        return evidenceService.verify(id);
+        VerificationResponse response = evidenceService.verify(id);
+        audit.recordAccess(id, true);
+        return response;
     }
 
     @PutMapping("/" + ID)

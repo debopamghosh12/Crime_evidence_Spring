@@ -61,13 +61,15 @@ class EvidenceServiceTest {
     final UploadProperties upload = new UploadProperties(List.of("text/plain", "image/png"));
     final CaseFileRepository cases = mock(CaseFileRepository.class);
     final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
+    final com.blockevidence.backend.notification.NotificationService notifications = mock(com.blockevidence.backend.notification.NotificationService.class);
     final EvidenceService service = build(ledger);
 
     EvidenceService build(LedgerService l) {
         CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
         ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
         lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
-        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload, cases, caseLinks, clock);
+        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload, cases, caseLinks,
+                notifications, clock);
     }
 
     AuthenticatedUser user(Role role) {

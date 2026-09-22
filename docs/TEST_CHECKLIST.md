@@ -600,6 +600,153 @@ EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c
 **Regression:** the whole Phase 2 checklist re-run with the listener active - 0 application `ERROR` lines, 0
 script tracebacks (verbatim in Appendix P4-G3).
 
+## P4-H. Phase 4: H1-H4, A6 — built and verified live, 2026-09-22
+
+Built straight through after G3's approval, per docs/G3_SYNC_DESIGN.md section 11. All verified against the
+same running system as P4-G3 (real Fabric + PostgreSQL, G3 listener active).
+
+**Java tests (208 total, up from 197 after G3), full per-class table:**
+```
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  audit.AuditServiceTest
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0  config.JwtPropertiesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  controller.EvidenceControllerTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  controller.Phase3ControllersTest
+Tests run: 22, Failures: 0, Errors: 0, Skipped: 0  ledger.FabricLedgerServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  ledger.FileWalletIdentityStoreTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.HealthIndicatorsTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerServiceTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerTransferTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.WalletHealthIndicatorTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0  notification.NotificationServiceTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  security.JwtServiceTest
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0  security.SecurityAndErrorFormatTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0  service.AuthServiceTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
+Tests run: 27, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  service.HashingInputStreamTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0  service.LifecycleServicesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  storage.HttpIpfsClientTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  sync.EventProcessorTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  sync.EventSyncHealthIndicatorTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  sync.EventSyncListenerTest
+Tests run: 208, Failures: 0, Errors: 0, Skipped: 0
+```
+New: `AuditServiceTest` (5), `NotificationServiceTest` (6). H1/H2/H3 are read-only, no-business-logic queries
+(a JPA Specification and a few native aggregate queries) verified directly against real PostgreSQL live, not
+duplicated in a unit test against a fake database.
+
+### H1-H4: setup and live results (verbatim)
+```
+
+### Setup: a case, two evidence items, a transfer, a status change, a disposal
+case FAB-H4-6438 -> 201
+E1=EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7  E2=EV-5045989f-cad1-4e8f-a136-3e203e274718
+transfer EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 collector->analyst -> 200
+status change EV-5045989f-cad1-4e8f-a136-3e203e274718 -> PROCESSING -> 200
+disposal request EV-5045989f-cad1-4e8f-a136-3e203e274718 -> 200
+disposal approve EV-5045989f-cad1-4e8f-a136-3e203e274718 -> 200
+
+### H1 search/filter (served from Postgres, not the ledger)
+by caseId -> 200
+   totalElements: 2  ids: ['EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7', 'EV-5045989f-cad1-4e8f-a136-3e203e274718']
+by status=DISPOSED -> 200
+   ids: ['EV-c7800f6a-b95e-4325-8799-4f9c2c702716', 'EV-c8ce9372-3429-48fc-9741-de4700f94f7d', 'EV-a1e6c5fd-091a-4982-b3f4-6cbdff41cc8a', 'EV-197b8db1-7673-4174-8b64-d92b66cb7fb9', 'EV-09b33d4a-1ac3-483b-a402-6388d4beb361', 'EV-9a8c5dea-0244-4dc3-bf54-059ab1dfcf91', 'EV-b72feb78-9fc5-430f-8e4b-c6928182f319', 'EV-dbd9201f-e4a6-45cb-a129-2a4ed5eb8a44', 'EV-5045989f-cad1-4e8f-a136-3e203e274718']  (expect EV-5045989f-cad1-4e8f-a136-3e203e274718 among them)
+free text q=lab -> 200
+   ids: []
+by officer=collector -> 200
+   count: 20
+paginated size=1 -> 200
+   items: 1  totalPages: 2
+
+### H2 dashboard analytics
+-> 200
+   totalEvidence: 103
+   byStatus: {'ARCHIVED': 3, 'COLLECTED': 91, 'DISPOSED': 9}
+   byType: {'PHYSICAL': 78, 'DIGITAL': 25}
+   activityByDay entries: 2  last: {'date': '2026-09-22', 'count': 85}
+
+### H3 activity feed
+-> 200
+   DISPOSAL_APPROVED   EV-5045989f.. v4  approved
+   DISPOSAL_REQUESTED  EV-5045989f.. v3  case closed
+   STATUS_CHANGED      EV-5045989f.. v2  sent to lab
+   TRANSFER_INITIATED  EV-dc9d4ffb.. v2  analysis
+   CREATED             EV-5045989f.. v1  
+   CREATED             EV-dc9d4ffb.. v1  
+
+### H4 notifications
+analyst's notifications (expect TRANSFER_PENDING for EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7) -> 200
+   DISPOSAL_APPROVED    Evidence EV-5045989f-cad1-4e8f-a136-3e203e274718 was disposed
+   DISPOSAL_REQUESTED   Evidence EV-5045989f-cad1-4e8f-a136-3e203e274718 has a disposal request pending
+   STATUS_CHANGED       Evidence EV-5045989f-cad1-4e8f-a136-3e203e274718 changed status to PROCESSING
+   TRANSFER_PENDING     You have a pending custody transfer for evidence EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7
+mark read -> 204
+   readAt now: 2026-09-22T08:07:59.298091Z
+case members' notifications for the status change / disposal on EV-5045989f-cad1-4e8f-a136-3e203e274718 (prosecutor, judge, collector as lead, analyst as member):
+   collector: ['DISPOSAL_APPROVED', 'DISPOSAL_REQUESTED', 'STATUS_CHANGED']
+   analyst: ['DISPOSAL_APPROVED', 'DISPOSAL_REQUESTED', 'STATUS_CHANGED']
+   prosecutor: []
+   judge: []
+
+tamper alert: corrupt E1's file block on IPFS disk, then verify=true
+verify EV-4bef7b05-621b-4e94-993c-36d88b126881 -> 200
+   status                     TAMPERED
+   file.result                TAMPERED
+   collector notifications for EV-4bef7b05-621b-4e94-993c-36d88b126881: ['TAMPER_ALERT']
+```
+
+### A6: the full set, including the specific check the owner required before this could be marked done (verbatim)
+```
+
+### A6 ordinary VIEW and DOWNLOAD
+GET EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 (VIEW) -> 200
+GET EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7?verify=true (DOWNLOAD) -> 200
+DOWNLOAD | EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 | auditor@blockevidence.local
+VIEW | EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 | auditor@blockevidence.local
+
+### A6 failed attempts: ACCESS_DENIED and AUTH_FAILED
+collector tries to approve disposal (JUDGE only) -> 403
+bad login -> 401
+garbage token -> 401
+AUTH_FAILED | /api/evidence/EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 |  | Full authentication is required to access this resource
+AUTH_FAILED | /api/auth/login |  | Invalid email or password
+ACCESS_DENIED | /api/evidence/EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7/disposal/approve | collector@blockevidence.local | Access Denied
+
+### A6: THE required check - deactivate a user with a STILL-VALID access token, then use it
+auditor's token is already issued and valid; deactivate the auditor account directly (no A4 endpoint exists yet):
+UPDATE 1
+the auditor's OLD token: eyJhbGciOiJIUzI1NiJ9.eyJp... (issued before deactivation, not yet expired)
+GET EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 with that now-stale-but-cryptographically-valid token -> 200
+   HTTP response status field (request still SUCCEEDS - the TTL gap is not being fixed): COLLECTED
+the resulting audit row:
+            action             |                resource                 |            email            |  detail  |          occurred_at          
+-------------------------------+-----------------------------------------+-----------------------------+----------+-------------------------------
+ TOKEN_USED_AFTER_DEACTIVATION | EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 | auditor@blockevidence.local | view     | 2026-09-22 08:09:00.68383+00
+ DOWNLOAD                      | EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 | auditor@blockevidence.local | download | 2026-09-22 08:08:56.205114+00
+ VIEW                          | EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7 | auditor@blockevidence.local | view     | 2026-09-22 08:08:56.058368+00
+(3 rows)
+
+compare: an ordinary VIEW by the SAME auditor BEFORE deactivation (already shown above) was action=VIEW - this one is different.
+reactivating the auditor account (cleanup, restores the seeded state)
+UPDATE 1
+confirming: a fresh login + request afterwards is an ordinary VIEW again
+VIEW | auditor@blockevidence.local
+
+### A6 read endpoint: GET /api/audit (ADMIN/AUDITOR only)
+as admin, filtered to the deactivation-visibility action -> 200
+   totalElements: 1
+     TOKEN_USED_AFTER_DEACTIVATION auditor@blockevidence.local EV-dc9d4ffb-3900-4eb2-8319-0dcfc0bda5b7
+as collector (must be refused, ADMIN/AUDITOR only) -> 403
+```
+The `TOKEN_USED_AFTER_DEACTIVATION` row is distinguishable, in the same table and the same query, from the
+ordinary `VIEW`/`DOWNLOAD` rows the SAME user's earlier requests produced - not asserted from the schema, shown
+in the real running system. No A4 (admin user management) endpoint exists yet, so the deactivation itself was a
+direct SQL `UPDATE users SET enabled=false` - exactly what A4 would eventually do through the API, without
+building A4 (out of scope for Phase 4).
+
+### Regression: the whole Phase 2 checklist re-run with H1-H4/A6 active
+`scripts/live/live_phase2.sh` exit 0; application log `ERROR` count: 0; script traceback count: 0.
+
 
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
