@@ -408,3 +408,27 @@ free-text description does NOT appear. A live run against real Fabric reproduced
 through the API, then generated the report AS THE JUDGE (confirmed via `metadataAvailable=false` that they held
 no content key for this item) - the report generated successfully and every hash/tx-id/actor-id in the real PDF
 matched the real `/history` response exactly.
+
+## D-065 — L1: filled 3 real unit-test gaps, did not pad for coverage numbers (2026-09-22)
+Surveyed every main class with no test file, then filtered to ones with actual untested LOGIC (not DTOs,
+entities, or classes already covered live per their own feature docs). Found three genuine gaps, all pure
+(no database needed), all previously exercised only through live curl checks that happened to hit one path:
+`SearchService.sortProperty` (H1's sort allow-list - an untrusted client string must fall back safely, never
+reach a raw property lookup; only the "happy path" sort keys were ever tried live), `DashboardService.
+toLocalDate` (three different possible JDBC row shapes for a `date_trunc` aggregate - `java.sql.Timestamp`,
+`Instant`, and a string-parse fallback; live testing against one real Postgres driver only ever exercises ONE
+of the three), and `ActivityService.feed`'s caseId-blank-vs-null-vs-real branching and page-size cap. All three
+get a mocked-repository unit test with an `ArgumentCaptor` on the `Pageable`/query actually built - deterministic,
+fast, and covering edge cases (a SQL-injection-shaped sort string, a blank caseId, a 100000-row page request) a
+curl script would not naturally think to send.
+
+**Deliberately NOT touched:** `EvidenceProjectionSpecifications`/`AuditSpecifications` (H1/A6's actual predicate-
+building) - these need a real `CriteriaBuilder`/`Root` to test meaningfully; mocking the Criteria API would prove
+only that certain builder methods were called, not that the resulting QUERY is correct, which is exactly the
+kind of coverage-number padding L1 was scoped to avoid. This is squarely what L2 (Testcontainers) is for instead
+- a real Postgres, real Specification-built queries, real result sets. `VerificationService.overall()`'s
+precedence logic (TAMPERED > NOT_FOUND > VERIFIED) was also left alone: `EvidenceServiceTest` already exercises
+5 of its 9 input combinations, including the one that matters most (a proven mismatch outranks missing content)
+- already strong, documented coverage, not a gap.
+
+253 Java tests total (18 new).

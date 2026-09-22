@@ -938,6 +938,27 @@ found by reading the generated PDF back with `PdfTextExtractor`, not by inspecti
 narrative timeline table and a dedicated wide actors/transaction-ids table before this live run.
 
 
+## P5-L1. Phase 5: unit test gaps filled (L1) — 2026-09-22
+
+Per DECISIONS D-065: 3 real, previously-untested pure-logic gaps found and filled (not padding). New:
+`SearchServiceTest` (7), `DashboardServiceTest` (6), `ActivityServiceTest` (5) - all mocked-repository tests with
+an `ArgumentCaptor` on the actual `Pageable`/query built, no database needed.
+```
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0 -- SearchServiceTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0 -- DashboardServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0 -- ActivityServiceTest
+
+Tests run: 253, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+Covers: an unrecognised/SQL-injection-shaped `sort` value falls back to `updatedAt` rather than erroring or
+passing through raw; all three allow-listed sort keys and the `-` (descending) prefix are honoured; page size is
+capped at 200 and floored at 1 in both `SearchService` and `ActivityService`; a blank `caseId` is treated the
+same as no `caseId`; and `DashboardService.toLocalDate` correctly handles all three JDBC row shapes it defends
+against (`java.sql.Timestamp`, a plain `Instant`, and the string-parse fallback for e.g. `java.sql.Date`) - live
+testing against one real Postgres driver only ever exercised one of the three.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

@@ -21,11 +21,16 @@
   first: `ReportService` depends ONLY on `LedgerService`/`VerificationService`, architecturally incapable of
   needing decrypted content - new dependency OpenPDF 2.2.2, not iText, D-064); found and fixed a real layout bug
   (long tx-ids/actor UUIDs wrapping mid-string in a cramped table, caught by reading the generated PDF back with
-  `PdfTextExtractor` in a unit test) before the live run. 235 Java tests total (18 F2/F3 + 6 F5 + 3 I1, all new
-  tests against real crypto, a controlled failure sequence, or a real reference-ledger timeline - none
-  mocked-away). Committed: `9445edf` (F4 + F2/F3 build), `a656a52` (F2/F3 real-Fabric docs), `e361dce` (F5); I1
-  not yet committed - see Left.
-- **Left:** I1's code/docs are uncommitted (pending this session's own review pass); L1-L3, K2 not started.
+  `PdfTextExtractor` in a unit test) before the live run. Then L1: surveyed every untested main class, filled 3
+  genuine pure-logic gaps (`SearchService` sort allow-list, `DashboardService`'s 3 JDBC row-shape branches,
+  `ActivityService`'s caseId/page-size branching, D-065) - deliberately did NOT add Criteria-API-mocking tests
+  for `EvidenceProjectionSpecifications`/`AuditSpecifications` (that needs a real database to mean anything,
+  which is what L2 is for) or more `VerificationService.overall()` coverage (already strong via
+  `EvidenceServiceTest`). 253 Java tests total. Committed: `9445edf` (F4+F2/F3), `a656a52` (F2/F3 real-Fabric
+  docs), `e361dce` (F5), `d071c4e` (I1); L1 not yet committed - see Left.
+- **Left:** L1's 3 new test files are uncommitted (pending this session's own review pass); L2, L3, K2 not
+  started - L2/L3 blocked on reporting back to the owner (requested) whether containerizing Fabric into Compose
+  is safe to attempt or too risky for the time available, before writing any Compose/Testcontainers code.
 - **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
   a fresh random master key had been generated for that run, but the collector's RSA private key was already
   persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
@@ -37,8 +42,10 @@
   reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
   session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
   session's scratchpad only, not the repo.
-- **Next session start:** proceed to L1-L3 (unit test gaps, Testcontainers, Docker Compose) then K2
-  (springdoc/Postman) last, per the owner's own sequencing. No outstanding Fabric/wallet blocker remains.
+- **Next session start:** report the Fabric-in-Compose risk assessment the owner asked for (given the A2
+  registrar/wallet fragility found this session), then build L2+L3 together if judged safe, or the
+  backend+Postgres+IPFS-only Compose fallback with Fabric left as a documented separate WSL step if not. Then K2
+  (springdoc/Postman) last. No outstanding Fabric/wallet blocker remains.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 

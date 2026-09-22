@@ -46,7 +46,7 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 COMPLETE: G3, H1, H2, H3, H4, A6 (2026-09-22). Phase 5 in progress: F4 audited (2026-09-22, no violation found); F2, F3 built and fully verified live against real Fabric/PostgreSQL/IPFS (2026-09-22); F5 built (2026-09-22, scoped to register() only, see section C); I1 built and verified live on real Fabric (2026-09-22, docs/features/i1-chain-of-custody-report.md); L1-L3, K2 still open. A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
+Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 COMPLETE: G3, H1, H2, H3, H4, A6 (2026-09-22). Phase 5 in progress: F4 audited (2026-09-22, no violation found); F2, F3 built and fully verified live against real Fabric/PostgreSQL/IPFS (2026-09-22); F5 built (2026-09-22, scoped to register() only, see section C); I1 built and verified live on real Fabric (2026-09-22, docs/features/i1-chain-of-custody-report.md); L1 done (2026-09-22, D-065, 3 real gaps filled, 253 tests); L2-L3, K2 still open. A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
 only through the dev seeder, all 6 of whom are now A2-enrolled (`scripts/fabric/enroll_users.sh`); a user added once A4 exists
 would need the same enrollment step run for them before their first write (docs/FABRIC_RUNBOOK.md section 8).
 
