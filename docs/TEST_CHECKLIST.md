@@ -11,11 +11,11 @@ Phase 1 live checks (sections 2-8 below) were run 2026-09-22 and are unchanged.
 
 Secrets are never written in this file: commands use environment-variable references.
 
-## P3. Phase 3: status, custody, cases (D1-D3, E1, E2) — run 2026-09-22
+## P3. Phase 3: status, custody, cases, case-evidence link (D1-D3, E1-E3) — run 2026-09-22, updated 2026-09-22 for E3
 
 Environment: default (Fabric) profile app on `localhost:8080`; `FabricLedgerService` -> `peer0.org1` (Org1MSP), channel `crimechannel`,
-chaincode `evidence` **v1.2 seq 3**, both orgs endorsing; PostgreSQL 16 container on 5433 (Flyway applied `V2 cases` at startup); Kubo in `--offline` mode.
-**Not run, by owner decision:** single-org endorsement failure, orderer outage, peer failover, load (docs/KNOWN_GAPS.md A). **E3 and A2 are not built** (see below).
+chaincode `evidence` **v1.2 seq 3**, both orgs endorsing; PostgreSQL 16 container on 5433 (Flyway applied `V3 case_evidence_links` at startup); Kubo in `--offline` mode.
+**Not run, by owner decision:** single-org endorsement failure, orderer outage, peer failover, load (docs/KNOWN_GAPS.md A). **A2 is design only, not implemented** (see below).
 
 ### P3.1 Automated Java tests: `./mvnw -o test`
 ```
@@ -29,15 +29,16 @@ Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerTransferT
 Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  security.JwtServiceTest
 Tests run: 17, Failures: 0, Errors: 0, Skipped: 0  security.SecurityAndErrorFormatTest
 Tests run: 13, Failures: 0, Errors: 0, Skipped: 0  service.AuthServiceTest
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
-Tests run: 26, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
+Tests run: 27, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
 Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  service.HashingInputStreamTest
 Tests run: 11, Failures: 0, Errors: 0, Skipped: 0  service.LifecycleServicesTest
 Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  storage.HttpIpfsClientTest
-Tests run: 171, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 173, Failures: 0, Errors: 0, Skipped: 0
 ```
-New in Phase 3: `InMemoryLedgerTransferTest` 9, `LifecycleServicesTest` 11, `Phase3ControllersTest` 9, `CaseServiceTest` 7, plus 5 new wire-format tests in
-`FabricLedgerServiceTest` (real v1.2 fixtures) = 41 more than the 130 of Phase 2. One run failed 1 test: the null-`transfer` finding, fixed (docs/bugs/ledger-record-without-transfer-key.md).
+New for D1-D3/E1-E2: `InMemoryLedgerTransferTest` 9, `LifecycleServicesTest` 11, `Phase3ControllersTest` 9, plus 5 new wire-format tests in
+`FabricLedgerServiceTest` (real v1.2 fixtures). New for E3: `CaseServiceTest` 6 -> 8 (+2), `EvidenceServiceTest` 26 -> 27 (+1) = 173 total, up from
+130 at the end of Phase 2. One run failed 1 test along the way: the null-`transfer` finding, fixed (docs/bugs/ledger-record-without-transfer-key.md).
 
 ### P3.2 Go chaincode tests: `go test -count=1 -v ./...` in `chaincode/evidence` (33 passed; full verbatim list in Appendix P3-G)
 
@@ -59,6 +60,23 @@ Compared with the earlier real-Fabric Phase 2 run (P2-F-D) after normalising ids
 >    v2  METADATA_UPDATED  tx=TX..  at=2026-09-21T20:46:48.224963900Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
 ```
 Only ledger timestamps differ: behaviour is identical (register/verify/TAMPERED/NOT_FOUND/versioning/disposal/roles/limits/IPFS outage).
+
+### P3.8 E3 (evidence-to-case link) built and verified, 2026-09-22
+Owner decision: Option B (Spring link table via `EvidenceService.register`), enforced unconditionally (docs/features/e3-evidence-case-link.md,
+DECISIONS D-046). All three live scripts were updated to create their cases before registering evidence under them (`live_phase2.sh` E3
+prerequisite section, `live_fabric_extra.sh`, `live_phase3.sh`), and all three were re-run end to end against real Fabric v1.2 seq 3 and real
+PostgreSQL (Appendices P3-L, P3-R, P3-E are these E3-era runs; application log after all three: 0 `ERROR` lines, 0 script tracebacks).
+```
+register under an unknown case number -> 404  CASE_NOT_FOUND
+register under the just-created case FAB-P3-CASE-16848 -> evidence EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354
+the case now lists it (GET /api/cases/{id}):           200
+evidenceIds: ['EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354']
+and the full-record endpoint:                          200
+linked: ['EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354']
+```
+Comparing the Phase 2 checklist before and after E3 (normalised the same way as P3.4) shows only the new case-creation prerequisite lines and
+timestamps added; every existing check is byte-identical, confirming E3 changed nothing about how Phase 2's checks behave except the new
+case requirement itself.
 
 ### P3.5 Fabric-only checks re-run (Appendix P3-E, `scripts/live/live_fabric_extra.sh`)
 Real txIds found on the peers' ledger (qscc), concurrent-update race (exactly one winner in 3 rounds), peer outage 503 and self-recovery.
@@ -85,8 +103,8 @@ copied
 Real refusals as the peer prints them: `FORBIDDEN_ROLE: Only the named receiver can respond to this transfer`, `INVALID_STATE: A transfer is already pending`.
 
 ### P3.7 Not covered / not built
-E3 (evidence-case link, owner choice pending, docs/features/e1-e2-cases-and-officers.md); A2 (design only, Appendix P3-A is the CA spike it rests on, not an implementation);
-D4; a user-lookup endpoint; the four known gaps of KNOWN_GAPS section A.
+A2 (design only, Appendix P3-A is the CA spike it rests on, not an implementation, until section P3-A2 below); D4; a user-lookup endpoint;
+the four known gaps of KNOWN_GAPS section A.
 
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
@@ -953,12 +971,12 @@ removed-block
    after restarting the peer: GET evidence -> 200 (recovered after ~4 s, no app restart)
 ```
 
-## Appendix P3-L. Phase 3 live run, verbatim (`scripts/live/live_phase3.sh`, second run after the case fix)
+## Appendix P3-L. Phase 3 live run, verbatim (`scripts/live/live_phase3.sh`, E3-era: cases created before evidence, E3 section included)
 
 ```
 
 ### D1 status state machine (analyst moves COLLECTED -> PROCESSING -> ANALYZED)
-   evidence EV-f6a00945-bef5-4333-808a-d39dd41dcc0e
+   evidence EV-0bfba3c9-decb-4d3a-aeae-9c48572bab58
    -> 200 PROCESSING
    status                   PROCESSING
    version                  2
@@ -985,7 +1003,7 @@ removed-block
    lastReason               case file complete
 
 ### D2 two-step custody transfer
-   evidence EV-3b346dad-0530-4adc-9695-ccb759cf565d (custodian = collector f47ff616-80f2-4b54-b128-3b1b3fb6b8d0)
+   evidence EV-394a3a7f-d122-48a4-8141-96a5fa873463 (custodian = collector f47ff616-80f2-4b54-b128-3b1b3fb6b8d0)
    initiate collector -> analyst:                        200
    status                   COLLECTED
    version                  2
@@ -994,7 +1012,7 @@ removed-block
    lastReason               forensic analysis
    -> custody has NOT moved yet (still the collector)
    pending list for the ANALYST:
-      EV-3b346dad.. from f47ff616.. reason='forensic analysis' notes='sealed bag 7, seal intact' version 2
+      EV-394a3a7f.. from f47ff616.. reason='forensic analysis' notes='sealed bag 7, seal intact' version 2
    pending list for the COLLECTOR (sender):              200 -> 0 items
    AUDITOR tries to initiate:                            403  ACCESS_DENIED | You do not have permission to perform this action
    collector tries a 2nd transfer while one is pending:  409  INVALID_STATE | A transfer is already pending
@@ -1031,15 +1049,15 @@ removed-block
    users: collector=f47ff616.. analyst=b9481c66.. prosecutor=286529a7.. judge=e878852e..
 200   HTTP 200 (AUDITOR may read)
    currentCustodian: b9481c66.. | pendingTransfer: None
-   v1  CUSTODY_STARTED     from=-          to=f47ff616.. after=f47ff616.. tx=a1fdfe5e40cc.. reason=None note=None
-   v2  TRANSFER_INITIATED  from=f47ff616.. to=b9481c66.. after=f47ff616.. tx=1076a0ab3351.. reason='forensic analysis' note=None
-   v3  TRANSFER_ACCEPTED   from=f47ff616.. to=b9481c66.. after=b9481c66.. tx=8e506bba48f2.. reason='forensic analysis' note='received intact, seal verified'
-   v4  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=550cd60f9d29.. reason='for court filing' note=None
-   v5  TRANSFER_REJECTED   from=b9481c66.. to=286529a7.. after=b9481c66.. tx=ddcebbe0695f.. reason='for court filing' note='not ready to receive'
-   v6  TRANSFER_INITIATED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=a7ff73266cb8.. reason='court custody' note=None
-   v7  TRANSFER_CANCELLED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=1c47480db09a.. reason='court custody' note='wrong court'
-   v8  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=e8150c6d8617.. reason='forged-sender probe' note=None
-   v9  TRANSFER_CANCELLED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=6335fc5c3240.. reason='forged-sender probe' note='probe done'
+   v1  CUSTODY_STARTED     from=-          to=f47ff616.. after=f47ff616.. tx=55094d63dc32.. reason=None note=None
+   v2  TRANSFER_INITIATED  from=f47ff616.. to=b9481c66.. after=f47ff616.. tx=173bccbcf4a4.. reason='forensic analysis' note=None
+   v3  TRANSFER_ACCEPTED   from=f47ff616.. to=b9481c66.. after=b9481c66.. tx=25d20844cf77.. reason='forensic analysis' note='received intact, seal verified'
+   v4  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=9454ca6aa375.. reason='for court filing' note=None
+   v5  TRANSFER_REJECTED   from=b9481c66.. to=286529a7.. after=b9481c66.. tx=80fe4893a509.. reason='for court filing' note='not ready to receive'
+   v6  TRANSFER_INITIATED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=5bb7097cbf0b.. reason='court custody' note=None
+   v7  TRANSFER_CANCELLED  from=b9481c66.. to=e878852e.. after=b9481c66.. tx=4f5196e5f090.. reason='court custody' note='wrong court'
+   v8  TRANSFER_INITIATED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=bccfaa62f69f.. reason='forged-sender probe' note=None
+   v9  TRANSFER_CANCELLED  from=b9481c66.. to=286529a7.. after=b9481c66.. tx=a74924d7cab2.. reason='forged-sender probe' note='probe done'
    timeline of an item with NO transfers (E1):
      events: ['CUSTODY_STARTED'] (status changes are not custody events)
    unknown id: 404 EVIDENCE_NOT_FOUND | Evidence EV-00000000-0000-4000-8000-000000000000 does not exist
@@ -1047,15 +1065,15 @@ removed-block
    no DELETE on these routes:  405 405
 
 ### E1 create and manage cases (PostgreSQL, Flyway V2)
-   ADMIN creates FAB-P3-CASE-12514 with the collector as lead officer:  201
-   caseNumber               FAB-P3-CASE-12514
+   ADMIN creates FAB-P3-CASE-16848 with the collector as lead officer:  201
+   caseNumber               FAB-P3-CASE-16848
    status                   OPEN
    leadOfficerId            f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
    members: [('f47ff616..', 'LEAD_OFFICER')]  createdBy: 54db3c70.. (admin, from the token)
    same number again (different case):                    409  CASE_NUMBER_TAKEN | A case with this number already exists
    lead officer is an AUDITOR:                            400  INVALID_LEAD_OFFICER | A user with role AUDITOR cannot lead a case
    COLLECTOR tries to create a case:                      403  ACCESS_DENIED | You do not have permission to perform this action
-   bad case number:                                       400  fields: ['caseNumber', 'leadOfficerId']
+   bad case number:                                       400  fields: ['leadOfficerId', 'caseNumber']
    any role can read: AUDITOR list 200, get 200; anonymous 401
 
 ### E2 assign officers to the case, with a role on the case
@@ -1072,20 +1090,27 @@ removed-block
    title: Burglary at 12 High St (renamed) | lead: 286529a7.. | team: [('286529a7..', 'LEAD_OFFICER'), ('b9481c66..', 'FORENSIC_ANALYST'), ('f47ff616..', 'INVESTIGATOR')]
    update with nothing to change:                         400  fields: ['atLeastOneChange']
    DELETE a case (no such route):                         405
-   the case number is a valid ledger caseId (NOT enforced yet, E3): 201
+
+### E3 link evidence to the case (JPA relation, ledger caseId still just a string)
+   register under an UNKNOWN case number:                 404  CASE_NOT_FOUND | No case with number 'NO-SUCH-CASE-P3' exists; create it first (POST /api/cases)
+   register under the just-created case FAB-P3-CASE-16848 -> evidence EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354
+   the case now lists it (GET /api/cases/{id}):           200
+   evidenceIds: ['EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354']
+   and the full-record endpoint:                          200
+   linked: ['EV-5c3230c9-e4fe-45a0-9cb6-f1b536e84354']
 
 ### Database (what is actually stored)
        case_number    | status |              title               
    -------------------+--------+----------------------------------
-    FAB-P3-CASE-12514 | OPEN   | Burglary at 12 High St (renamed)
-    FAB-P3-CASE-3680  | OPEN   | Burglary at 12 High Street
+    FAB-P3-CASE-16848 | OPEN   | Burglary at 12 High St (renamed)
+    FAB-P3-1          | OPEN   | Live check case FAB-P3-1
    (2 rows)
    
        case_role     | count 
    ------------------+-------
-    FORENSIC_ANALYST |     2
-    INVESTIGATOR     |     1
-    LEAD_OFFICER     |     2
+    FORENSIC_ANALYST |     3
+    INVESTIGATOR     |     2
+    LEAD_OFFICER     |     8
     PROSECUTOR       |     1
    (4 rows)
    
@@ -1093,7 +1118,8 @@ removed-block
    ---------+--------------------------+---------
     1       | users and refresh tokens | t
     2       | cases                    | t
-   (2 rows)
+    3       | case evidence links      | t
+   (3 rows)
 ```
 
 ## Appendix P3-G. Go chaincode tests, verbatim (`go test -count=1 -v ./...`, filtered to result lines)
@@ -1136,32 +1162,39 @@ PASS
 ok  	blockevidence/evidence	0.317s
 ```
 
-## Appendix P3-R. Phase 2 checklist through Fabric on chaincode v1.2 seq 3, verbatim (`scripts/live/live_phase2.sh`)
+## Appendix P3-R. Phase 2 checklist through Fabric on chaincode v1.2 seq 3, verbatim (`scripts/live/live_phase2.sh`, E3-era: includes the case-creation prerequisite)
 
 ```
 collector user id (from /api/auth/me): f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
 
+### E3 prerequisite: create the cases this checklist registers evidence under
+   case FAB-LIVE-1 -> 201 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-2 -> 201 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-3 -> 201 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-4 -> 201 (200/201 created, 409 already exists from an earlier run)
+   register under an unknown case number -> 404  CASE_NOT_FOUND
+
 ### B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)
 HTTP 201
-   evidenceId                 EV-83e4946e-387d-4c31-b350-6e830e5622a3
+   evidenceId                 EV-55b01288-75cc-4e1f-9dd5-588cedc6f2e3
    status                     COLLECTED
    version                    1
    createdBy                  f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
    currentCustodian           f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
-   fileCid                    bafkreid6mejfqa5pvsvymnl4nthxzvutstcoyjecpppju3fh6euuosagqm
-   fileSha256                 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   fileCid                    bafkreibgrzvoidfhatdn5gp4r44uhjlok5rw7ypy5ay3qkoq7dfc7ikhwq
+   fileSha256                 268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
    fileSize                   41
    metadataAvailable          True
    metadata.collectorId       f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
    verification.status        NOT_CHECKED
-   -> local sha256 of the file : 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
-   -> ledger fileSha256        : 7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   -> local sha256 of the file : 268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
+   -> ledger fileSha256        : 268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
    -> createdBy == collector id from JWT? YES
    -> stored bytes fetched from IPFS by the file CID == original? YES
 
 ### B1 register PHYSICAL evidence (no file)
 HTTP 201
-   evidenceId                 EV-424d2f51-9992-4bcd-867b-1163061399c7
+   evidenceId                 EV-4c124562-f907-469e-a237-0885f4c09af2
    evidenceType               PHYSICAL
    fileCid                    None
    fileSha256                 None
@@ -1175,7 +1208,7 @@ HTTP 201
    metadata.description       Suspect phone image
    verification.status        NOT_CHECKED
 200 HTTP by file CID
-   ids: ['EV-83e4946e-387d-4c31-b350-6e830e5622a3']
+   ids: ['EV-55b01288-75cc-4e1f-9dd5-588cedc6f2e3']
 200 HTTP by metadata CID
 404 HTTP by unknown CID
    error                      NOT_FOUND
@@ -1187,21 +1220,21 @@ HTTP 201
    status                     VERIFIED
    ledgerVersion              1
    file.result                VERIFIED
-   file.expectedSha256        7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
-   file.actualSha256          7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
+   file.expectedSha256        268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
+   file.actualSha256          268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
    metadata.result            VERIFIED
 
 ### C2 DELIBERATE CORRUPTION: change one word inside the file's block on the IPFS node's disk, then restart the node
-   -> block file on the node: /data/ipfs/blocks/NA/CIQH4YISLAB27LFLQY2XY3GPPTLJHFGE5QSIE666TJWKP4JJI5EANAY.data
-   -> before: LIVE-EVIDENCE-1790023571-original-content
-   -> after : LIVE-EVIDENCE-1790023571-0RIGINAL-content
+   -> block file on the node: /data/ipfs/blocks/PN/CIQCNDTK4QGKOBGG32M7ZDZZIOSW4V3DN7Q7R2BRXAU5B6GKF6QUPNA.data
+   -> before: LIVE-EVIDENCE-1790042759-original-content
+   -> after : LIVE-EVIDENCE-1790042759-0RIGINAL-content
    -> IPFS still answers a cat for the same CID (content-addressing did NOT catch it):
-   ->    cat -> LIVE-EVIDENCE-1790023571-0RIGINAL-content
+   ->    cat -> LIVE-EVIDENCE-1790042759-0RIGINAL-content
 200 HTTP verify
    status                     TAMPERED
    file.result                TAMPERED
-   file.expectedSha256        7e61125803afacab86357c6ccf7cd69394c4ec24827bde9a6ca7f12947480683
-   file.actualSha256          5861cd7032bf610866f2ee97378e4df1c4667d3fdc15eb7062ec10b30804cbb2
+   file.expectedSha256        268e6ae40ca704c6de99fc8f3943a56e57636fe1f8e831b829d0f8ca2fa147b4
+   file.actualSha256          4da70905cf429914e71cc48c22dad88432c3cfef50db4032911dab69f525704b
    metadata.result            VERIFIED
 200 HTTP GET ?verify=true
    verification.status        TAMPERED
@@ -1209,7 +1242,7 @@ HTTP 201
 
 ### C2 NOT_FOUND: register another item, delete its file block from the node's disk, restart
 removed-block
-200 HTTP verify (206 ms)
+200 HTTP verify (212 ms)
    status                     NOT_FOUND
    file.result                NOT_FOUND
    file.actualSha256          None
@@ -1223,7 +1256,7 @@ removed-block
    metadata.location          Locker 9
    metadata.description       Wallet
    metadata.metadataVersion   2
-   metadata.previousMetadataCid bafkreibfw5ybsuq4vagvs5hclcnddzun7gug3jkliul5ohwxl2ogrnksoi
+   metadata.previousMetadataCid bafkreiaznhzxnicgvuphptxzkoibotatcg5fl7jhgicjqwbo3nsq2fu2j4
 200 HTTP GET version 1 (old)
    version                    1
    metadata.location          Desk 2
@@ -1240,8 +1273,8 @@ removed-block
 
 ### C3 ledger history (tx ids and ledger timestamps)
 200 HTTP
-   v1  CREATED           tx=f0dd8433c6a17810..  at=2026-09-21T20:46:45.810238100Z  by=COLLECTOR reason=''
-   v2  METADATA_UPDATED  tx=ba53fee2f51c109e..  at=2026-09-21T20:46:48.224963900Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+   v1  CREATED           tx=4fdd825407b7fe71..  at=2026-09-22T02:06:35.398048700Z  by=COLLECTOR reason=''
+   v2  METADATA_UPDATED  tx=000227ddb9ff7be6..  at=2026-09-22T02:06:37.853162300Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
 
 ### B5 disposal: request (PROSECUTOR) -> COLLECTOR cannot approve -> stale approval rejected -> JUDGE approves
 200 HTTP request disposal
@@ -1287,9 +1320,9 @@ removed-block
    file on PHYSICAL evidence -> 400  FILE_NOT_ALLOWED
    missing required metadata field -> 400  ['description', 'caseId']
    60 MB file (limit 50 MB) -> 413  CONTENT_TOO_LARGE
-   20 MB file -> HTTP 201 in 3159 ms
-   -> local sha256 : 06b08db369286de4d99cc58feda3f53507c21ad3e7f6f7439500491857f57039
-   -> ledger sha256: 06b08db369286de4d99cc58feda3f53507c21ad3e7f6f7439500491857f57039   size=20000000
+   20 MB file -> HTTP 201 in 3310 ms
+   -> local sha256 : 4db5b1c4b39317a389688fa13d19198bbae54c3d5120b39b923a78c9f5c71055
+   -> ledger sha256: 4db5b1c4b39317a389688fa13d19198bbae54c3d5120b39b923a78c9f5c71055   size=20000000
 200 HTTP verify of the 20 MB file
    status                     VERIFIED
    file.result                VERIFIED
@@ -1312,17 +1345,17 @@ removed-block
    ipfs   : {'status': 'UP'}
 ```
 
-## Appendix P3-E. Fabric-only checks on v1.2, verbatim (`scripts/live/live_fabric_extra.sh`, rerun after the path-quoting fix)
+## Appendix P3-E. Fabric-only checks on v1.2, verbatim (`scripts/live/live_fabric_extra.sh`, E3-era)
 
 ```
 
 ### F1. Every txId the API reports is a real transaction on the peers' ledger (qscc GetTransactionByID)
-   evidence EV-925cee80-b55a-4e69-ba8f-e1ed547df373  API says: txId=8802bc064de0383d4558fd9b14cf4b9e4960f336b8a10e7d415fee03f82baa25  ledger timestamp=2026-09-21T20:48:29.564964400Z
+   evidence EV-79c2d0f7-2599-4b2a-8c35-4fac48291853  API says: txId=74267ef617cc9e60f429ceb2f168a3be72859c3e6d9773c3d8b46ee5d92ae402  ledger timestamp=2026-09-22T02:07:14.510999900Z
    qscc found -> #namespaces/fields/evidence/Sequence
-   qscc found -> 'EV-925cee80-b55a-4e69-ba8f-e1ed547df373
-   qscc found -> *EV~EV-925cee80-b55a-4e69-ba8f-e1ed547df373
+   qscc found -> 'EV-79c2d0f7-2599-4b2a-8c35-4fac48291853
+   qscc found -> *EV~EV-79c2d0f7-2599-4b2a-8c35-4fac48291853
    qscc found -> CreateEvidence
-   qscc found -> EV-925cee80-b55a-4e69-ba8f-e1ed547df373
+   qscc found -> EV-79c2d0f7-2599-4b2a-8c35-4fac48291853
    qscc found -> Org1MSP
    a made-up txId -> Error: endorsement failure during query. response: status:500 message:"Failed to get transaction with id 0000000000000000000000000000000000000000000000000000000
 

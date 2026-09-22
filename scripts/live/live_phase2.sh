@@ -32,6 +32,14 @@ reg() { # reg <token> <metadata-json> [file] [ctype]
   else curl -s -w '\nHTTP %{http_code}' -X POST $B/api/evidence -H "Authorization: Bearer $1" -F "metadata=$2;type=application/json"; fi
 }
 
+# E3: registering evidence under a case number now requires that case to already exist (case-insensitive match),
+# so every case number this checklist registers evidence under is created first. Tolerant of a case that already
+# exists from a previous run (409 CASE_NUMBER_TAKEN, ignored) so the script stays runnable more than once.
+ensure_case() { curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/cases -H "Authorization: Bearer $TAD" -H 'Content-Type: application/json' -d "{\"caseNumber\":\"$1\",\"title\":\"Live check case $1\",\"leadOfficerId\":\"$COLLECTOR_ID\"}"; }
+hdr "E3 prerequisite: create the cases this checklist registers evidence under"
+for cn in FAB-LIVE-1 FAB-LIVE-2 FAB-LIVE-3 FAB-LIVE-4; do echo "   case $cn -> $(ensure_case $cn) (200/201 created, 409 already exists from an earlier run)"; done
+echo "   register under an unknown case number -> $(status -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F 'metadata={"caseId":"NO-SUCH-CASE-XYZ","type":"PHYSICAL","description":"x"};type=application/json')  $(python -c "import json;print(json.load(open('body.json'))['error'])")"
+
 ########################################################################################################
 hdr "B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)"
 UNIQ="LIVE-EVIDENCE-$(date +%s)-original-content"

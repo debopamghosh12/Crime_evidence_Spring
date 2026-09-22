@@ -139,3 +139,11 @@ E3 (evidence-to-case linking) needs a change to Phase 2's register path or to `C
 
 ## D-045 — Wire fixtures: keep the v1.1 ones, add v1.2 ones (2026-09-22)
 `capture_wire_p3.sh` writes `p3-*.json/txt` (pending and accepted transfers, a never-transferred record, a five-step history, pending lists, two real error texts). The Phase 2 fixtures (captured on v1.1, no `transfer` key) are kept on purpose: they are the real "record written before transfers existed" shape.
+
+## D-046 — E3: Option B (Spring link table), case validation enforced unconditionally (2026-09-22)
+Two designs were offered (a chaincode composite-key index vs a PostgreSQL link table); the owner chose the PostgreSQL table
+(`case_evidence`, a new Flyway migration), explicitly to keep case validation in PostgreSQL and to avoid another chaincode
+version for this. `EvidenceService.register` now requires the caseId to name an existing case (case-insensitive), checked
+before any IPFS work; this is enforced unconditionally, not behind a flag, because the feature's own definition ("evidence
+belongs to a real case entity") and the owner's phrasing both point at enforcement rather than an optional check. All three
+live scripts were updated to create their cases first, since this is a real, visible change to how `register` behaves.

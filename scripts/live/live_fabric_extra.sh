@@ -18,6 +18,11 @@ for p in sys.argv[1:]: print('   %-22s %s' % (p, get(d,p)))
 status() { curl -s -o body.json -w '%{http_code}' "$@"; }
 hdr() { echo; echo "### $*"; }
 TC=$(tok collector); TA=$(tok forensic-analyst); TAU=$(tok auditor); TAD=$(tok admin)
+COLLECTOR_ID=$(curl -s $B/api/auth/me -H "Authorization: Bearer $TC" | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+# E3: registering evidence needs an existing case; tolerant of FAB-LIVE-4 already existing from live_phase2.sh (409, ignored),
+# so this script also runs standalone.
+curl -s -o /dev/null -X POST $B/api/cases -H "Authorization: Bearer $TAD" -H 'Content-Type: application/json' -d "{\"caseNumber\":\"FAB-LIVE-4\",\"title\":\"Live check case FAB-LIVE-4\",\"leadOfficerId\":\"$COLLECTOR_ID\"}"
 
 hdr "F1. Every txId the API reports is a real transaction on the peers' ledger (qscc GetTransactionByID)"
 ID=$(curl -s -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F 'metadata={"caseId":"FAB-LIVE-4","type":"PHYSICAL","description":"tx existence probe"};type=application/json' | python -c "import sys,json;print(json.load(sys.stdin)['evidenceId'])")

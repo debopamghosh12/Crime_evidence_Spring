@@ -10,11 +10,14 @@ import com.blockevidence.backend.domain.CaseRole;
 import com.blockevidence.backend.dto.AddMemberRequest;
 import com.blockevidence.backend.dto.CaseResponse;
 import com.blockevidence.backend.dto.CreateCaseRequest;
+import com.blockevidence.backend.dto.EvidenceResponse;
 import com.blockevidence.backend.dto.UpdateCaseRequest;
 import com.blockevidence.backend.exception.ApiException;
+import com.blockevidence.backend.model.CaseEvidenceLink;
 import com.blockevidence.backend.model.CaseFile;
 import com.blockevidence.backend.model.CaseMember;
 import com.blockevidence.backend.model.User;
+import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
 import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.repository.CaseMemberRepository;
 import com.blockevidence.backend.repository.UserRepository;
@@ -25,8 +28,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * E1/E2: cases and their team. Called by CaseController. Entirely off-chain (C-06): the ledger only ever sees the case NUMBER as a
- * plain string on evidence records.
+ * E1/E2/E3: cases, their team, and the evidence linked to them. Called by CaseController. Entirely off-chain (C-06): the ledger
+ * only ever sees the case NUMBER as a plain string on evidence records; {@code case_evidence} (E3) is what turns that string
+ * into a real link, maintained by {@link EvidenceService#register}, not here (a case never creates or edits evidence).
  *
  * <p>Removing a team member deletes one membership row. That is not evidence, so C-02 (never delete evidence records) does not apply;
  * this is the only delete in the codebase and it is deliberately narrow: the lead officer cannot be removed. Changing the lead officer
@@ -40,13 +44,18 @@ public class CaseService {
 
     private final CaseFileRepository cases;
     private final CaseMemberRepository members;
+    private final CaseEvidenceLinkRepository evidenceLinks;
     private final UserRepository users;
+    private final EvidenceService evidenceService;
     private final Clock clock;
 
-    public CaseService(CaseFileRepository cases, CaseMemberRepository members, UserRepository users, Clock clock) {
+    public CaseService(CaseFileRepository cases, CaseMemberRepository members, CaseEvidenceLinkRepository evidenceLinks,
+            UserRepository users, EvidenceService evidenceService, Clock clock) {
         this.cases = cases;
         this.members = members;
+        this.evidenceLinks = evidenceLinks;
         this.users = users;
+        this.evidenceService = evidenceService;
         this.clock = clock;
     }
 
@@ -70,6 +79,17 @@ public class CaseService {
     @Transactional(readOnly = true)
     public List<CaseResponse> list() {
         return cases.findAllByOrderByCreatedAtDesc().stream().map(this::toResponse).toList();
+    }
+
+    /**
+     * E3: the full ledger records linked to this case, oldest first. One ledger call per item (like
+     * {@code EvidenceService.findByCid}); this is a summary endpoint, not expected to be called per row of a list.
+     */
+    @Transactional(readOnly = true)
+    public List<EvidenceResponse> evidence(UUID caseId) {
+        load(caseId);
+        return evidenceLinks.findByCaseIdOrderByLinkedAtAsc(caseId).stream()
+                .map(link -> evidenceService.get(link.getEvidenceId(), false)).toList();
     }
 
     @Transactional
@@ -146,7 +166,10 @@ public class CaseService {
     private CaseResponse toResponse(CaseFile c) {
         List<CaseResponse.Member> team = members.findByCaseIdOrderByAddedAtAsc(c.getId()).stream()
                 .map(m -> new CaseResponse.Member(m.getUserId(), m.getCaseRole(), m.getAddedBy(), m.getAddedAt())).toList();
+        // E3: ids only here (cheap, no ledger call); GET /api/cases/{id}/evidence has the full records.
+        List<String> evidenceIds = evidenceLinks.findByCaseIdOrderByLinkedAtAsc(c.getId()).stream()
+                .map(CaseEvidenceLink::getEvidenceId).toList();
         return new CaseResponse(c.getId(), c.getCaseNumber(), c.getTitle(), c.getDescription(), c.getLeadOfficerId(),
-                c.getStatus(), c.getCreatedBy(), c.getCreatedAt(), team);
+                c.getStatus(), c.getCreatedBy(), c.getCreatedAt(), team, evidenceIds);
     }
 }

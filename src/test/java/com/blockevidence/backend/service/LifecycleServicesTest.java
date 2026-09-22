@@ -2,6 +2,8 @@ package com.blockevidence.backend.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -26,7 +28,10 @@ import com.blockevidence.backend.exception.ApiException;
 import com.blockevidence.backend.ledger.InMemoryLedgerService;
 import com.blockevidence.backend.ledger.LedgerErrorCode;
 import com.blockevidence.backend.ledger.LedgerException;
+import com.blockevidence.backend.model.CaseFile;
 import com.blockevidence.backend.model.User;
+import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
+import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.repository.UserRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Role;
@@ -36,17 +41,27 @@ import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.json.JsonMapper;
 
-/** D1-D3 through the services, on the in-memory ledger and a fake IPFS node. */
+/** D1-D3 through the services, on the in-memory ledger and a fake IPFS node. Case validation (E3) is stubbed to
+ * always resolve, since these tests are about status/custody, not cases (that is CaseServiceTest/EvidenceServiceTest). */
 class LifecycleServicesTest {
 
     final Clock clock = Clock.fixed(Instant.parse("2026-03-01T10:00:00Z"), ZoneOffset.UTC);
     final FakeIpfsClient ipfs = new FakeIpfsClient();
     final InMemoryLedgerService ledger = new InMemoryLedgerService(clock);
     final UserRepository users = mock(UserRepository.class);
-    final EvidenceService evidence = new EvidenceService(ledger, ipfs, new VerificationService(ipfs, clock),
-            JsonMapper.builder().build(), new UploadProperties(List.of("text/plain")));
+    final CaseFileRepository cases = mock(CaseFileRepository.class);
+    final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
+    final EvidenceService evidence = buildEvidenceService();
     final StatusService status = new StatusService(ledger, evidence);
     final CustodyService custody = new CustodyService(ledger, users, evidence);
+
+    EvidenceService buildEvidenceService() {
+        CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
+        ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
+        lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
+        return new EvidenceService(ledger, ipfs, new VerificationService(ipfs, clock), JsonMapper.builder().build(),
+                new UploadProperties(List.of("text/plain")), cases, caseLinks, clock);
+    }
 
     AuthenticatedUser user(Role role) {
         return new AuthenticatedUser(UUID.randomUUID(), role.name().toLowerCase() + "@example.org", role);

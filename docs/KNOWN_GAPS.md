@@ -2,7 +2,7 @@
 
 **Purpose.** An honest list of what is NOT tested, NOT built, or only partly true, so the report and the demo claim nothing that
 was not done (FEATURE_LIST.md: "keep an honest split so nothing is claimed that is not built"). Every entry names where the detail
-lives. Last updated 2026-09-22 (Phase 3 built, before owner review). Update this file whenever a gap is closed or a new one is found; never delete an
+lives. Last updated 2026-09-22 (Phase 3 D1-D3/E1-E3 built and owner-approved; A2 in progress). Update this file whenever a gap is closed or a new one is found; never delete an
 entry silently, mark it resolved with the date.
 
 ## A. Deliberately left UNTESTED (owner decision 2026-09-22)
@@ -41,8 +41,7 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2 (2026-09-22). **Still open from Phase 3:** E3 (evidence-to-case linking, waiting for the owner's choice,
-so `caseId` on evidence is still an unchecked string and a case cannot list its evidence); A2 (per-user Fabric identities, design awaiting
+Phase 3 built: D1, D2, D3, E1, E2, E3 (2026-09-22). **Still open from Phase 3:** A2 (per-user Fabric identities, design awaiting
 approval; C-08 still open); D4 (optional). Then Phase 4 (G3, H1-H4, A6) and Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user
 management) and A5 (case-level access) appear in no build phase; users exist only through the dev seeder.
 
@@ -52,8 +51,10 @@ Phase 3 specifics, all found while building it:
 - **Status changes are not restricted to the custodian:** COLLECTOR, FORENSIC_ANALYST and PROSECUTOR may each move any item along the
   legal line (D-040). Per-step or custodian-only rules are an owner decision.
 - **Pending transfers never expire.**
-- **No endpoint closes a case** (status OPEN/CLOSED exists in the schema); no case-level read restriction (A5); the E3 enforcement flag
-  (reject an unknown case number at register time) is not built.
+- **No endpoint closes a case** (status OPEN/CLOSED exists in the schema); no case-level read restriction (A5).
+- **E3's off-chain link write is not transactional with the ledger write** (docs/features/e3-evidence-case-link.md): if it fails after
+  the ledger write already succeeded, the evidence stays correct on the ledger but is missing from the case's off-chain index until
+  reconciled; there is no reconciliation sweep (same class of gap as orphaned IPFS pins, D-024/D-037).
 - **Custody events show opaque user ids;** only the Phase 2 write txIds were individually looked up in the peers' ledger (qscc), not each Phase 3 step.
 - **No automated real-PostgreSQL test:** the case bug found live (docs/bugs/case-lead-change-unique-violation.md) is exactly what mocked
   repositories cannot show; live scripts cover it, CI does not.

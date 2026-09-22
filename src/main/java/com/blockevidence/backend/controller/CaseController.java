@@ -6,6 +6,7 @@ import java.util.UUID;
 import com.blockevidence.backend.dto.AddMemberRequest;
 import com.blockevidence.backend.dto.CaseResponse;
 import com.blockevidence.backend.dto.CreateCaseRequest;
+import com.blockevidence.backend.dto.EvidenceResponse;
 import com.blockevidence.backend.dto.UpdateCaseRequest;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Permissions;
@@ -55,6 +56,13 @@ public class CaseController {
     @PreAuthorize(Permissions.READ_EVIDENCE)
     public CaseResponse get(@PathVariable UUID id) {
         return caseService.get(id);
+    }
+
+    /** E3: the full evidence records linked to this case (CaseResponse.evidenceIds has just the ids). */
+    @GetMapping("/{id}/evidence")
+    @PreAuthorize(Permissions.READ_EVIDENCE)
+    public List<EvidenceResponse> evidence(@PathVariable UUID id) {
+        return caseService.evidence(id);
     }
 
     @PutMapping("/{id}")

@@ -22,11 +22,15 @@ import com.blockevidence.backend.domain.CaseStatus;
 import com.blockevidence.backend.dto.AddMemberRequest;
 import com.blockevidence.backend.dto.CaseResponse;
 import com.blockevidence.backend.dto.CreateCaseRequest;
+import com.blockevidence.backend.dto.EvidenceResponse;
 import com.blockevidence.backend.dto.UpdateCaseRequest;
+import com.blockevidence.backend.dto.VerificationResponse;
 import com.blockevidence.backend.exception.ApiException;
+import com.blockevidence.backend.model.CaseEvidenceLink;
 import com.blockevidence.backend.model.CaseFile;
 import com.blockevidence.backend.model.CaseMember;
 import com.blockevidence.backend.model.User;
+import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
 import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.repository.CaseMemberRepository;
 import com.blockevidence.backend.repository.UserRepository;
@@ -37,18 +41,28 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** E1/E2 with the repositories mocked; the schema itself is proven by the live run (Flyway V2 against PostgreSQL). */
+/** E1/E2 with the repositories mocked; the schema itself is proven by the live run (Flyway V2 against PostgreSQL).
+ * E3 (evidenceIds/evidence()) is covered here too; register()'s own use of the link table is EvidenceServiceTest's job. */
 class CaseServiceTest {
 
     final Clock clock = Clock.fixed(Instant.parse("2026-03-01T10:00:00Z"), ZoneOffset.UTC);
     final CaseFileRepository cases = mock(CaseFileRepository.class);
     final CaseMemberRepository members = mock(CaseMemberRepository.class);
+    final CaseEvidenceLinkRepository evidenceLinks = mock(CaseEvidenceLinkRepository.class);
     final UserRepository users = mock(UserRepository.class);
-    final CaseService service = new CaseService(cases, members, users, clock);
+    final EvidenceService evidenceService = mock(EvidenceService.class);
+    final CaseService service = new CaseService(cases, members, evidenceLinks, users, evidenceService, clock);
 
     final AuthenticatedUser admin = new AuthenticatedUser(UUID.randomUUID(), "admin@example.org", Role.ADMIN);
     final List<CaseMember> stored = new ArrayList<>();
+    final List<CaseEvidenceLink> linked = new ArrayList<>();
     final java.util.Map<UUID, CaseFile> caseStore = new java.util.HashMap<>();
+
+    EvidenceResponse sampleEvidence(String evidenceId) {
+        return new EvidenceResponse(evidenceId, "C", null, null, 1, null, null, null, null, null, null, null, null,
+                null, null, "CREATED", null, new EvidenceResponse.Disposal("NONE", null, null, null), false, null,
+                VerificationResponse.notChecked(evidenceId));
+    }
 
     User user(Role role, boolean enabled) {
         User u = new User(role.name() + "@example.org", "h", "N", "D", role, clock.instant());
@@ -88,6 +102,8 @@ class CaseServiceTest {
         when(members.findByCaseIdAndUserId(any(), any())).thenAnswer(i -> stored.stream()
                 .filter(m -> m.getCaseId().equals(i.getArgument(0)) && m.getUserId().equals(i.getArgument(1))).findFirst());
         org.mockito.Mockito.doAnswer(i -> stored.remove(i.getArgument(0, CaseMember.class))).when(members).delete(any(CaseMember.class));
+        when(evidenceLinks.findByCaseIdOrderByLinkedAtAsc(any())).thenAnswer(i -> linked.stream()
+                .filter(l -> l.getCaseId().equals(i.getArgument(0))).toList());
     }
 
     @Test
@@ -104,6 +120,22 @@ class CaseServiceTest {
             assertThat(m.userId()).isEqualTo(lead.getId());
             assertThat(m.caseRole()).isEqualTo(CaseRole.LEAD_OFFICER);
         });
+    }
+
+    @Test
+    void aCaseListsTheEvidenceLinkedToItByE3AndNothingElse() {
+        wireRepositories();
+        CaseResponse c = service.create(create(user(Role.COLLECTOR, true).getId()), admin);
+        assertThat(service.get(c.id()).evidenceIds()).isEmpty();
+        assertThat(service.evidence(c.id())).isEmpty();
+
+        linked.add(new CaseEvidenceLink(c.id(), "EV-1", admin.userId(), clock.instant()));
+        when(evidenceService.get("EV-1", false)).thenReturn(sampleEvidence("EV-1"));
+
+        assertThat(service.get(c.id()).evidenceIds()).containsExactly("EV-1");
+        assertThat(service.evidence(c.id())).extracting(EvidenceResponse::evidenceId).containsExactly("EV-1");
+        assertThatThrownBy(() -> service.evidence(UUID.randomUUID())).isInstanceOfSatisfying(ApiException.class,
+                e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 
     @Test

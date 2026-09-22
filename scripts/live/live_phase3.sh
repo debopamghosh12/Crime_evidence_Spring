@@ -26,6 +26,10 @@ UC=$(uid $TC); UA=$(uid $TA); UP=$(uid $TP); UJ=$(uid $TJ); UAU=$(uid $TAU)
 reg() { curl -s -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F "metadata={\"caseId\":\"$1\",\"type\":\"PHYSICAL\",\"description\":\"$2\"};type=application/json" | python -c "import sys,json;print(json.load(sys.stdin)['evidenceId'])"; }
 show() { pick status version currentCustodian lastAction lastReason < body.json; }
 
+# E3: registering evidence now requires the caseId to name an existing case (tolerant of it already existing from
+# an earlier run of this script: 409 CASE_NUMBER_TAKEN, ignored).
+curl -s -o /dev/null -X POST $B/api/cases -H "Authorization: Bearer $TAD" -H "$J" -d "{\"caseNumber\":\"FAB-P3-1\",\"title\":\"Live check case FAB-P3-1\",\"leadOfficerId\":\"$UC\"}"
+
 ########################################################################################################
 hdr "D1 status state machine (analyst moves COLLECTED -> PROCESSING -> ANALYZED)"
 E1=$(reg FAB-P3-1 "Laptop")
@@ -112,7 +116,14 @@ echo "   change the lead officer to the prosecutor + rename:    $(code -X PUT $B
 python -c "import json;d=json.load(open('body.json'));print('   title:',d['title'],'| lead:',d['leadOfficerId'][:8]+'..','| team:',sorted((m['userId'][:8]+'..',m['caseRole']) for m in d['members']))"
 echo "   update with nothing to change:                         $(code -X PUT $B/api/cases/$CASE -H "Authorization: Bearer $TAD" -H "$J" -d '{}')  fields: $(python -c "import json;print([f['field'] for f in json.load(open('body.json'))['fieldErrors']])")"
 echo "   DELETE a case (no such route):                         $(code -X DELETE $B/api/cases/$CASE -H "Authorization: Bearer $TAD")"
-echo "   the case number is a valid ledger caseId (NOT enforced yet, E3): $(curl -s -o body.json -w '%{http_code}' -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F "metadata={\"caseId\":\"$CN\",\"type\":\"PHYSICAL\",\"description\":\"linked by number\"};type=application/json")"
+
+########################################################################################################
+hdr "E3 link evidence to the case (JPA relation, ledger caseId still just a string)"
+echo "   register under an UNKNOWN case number:                 $(code -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F 'metadata={"caseId":"NO-SUCH-CASE-P3","type":"PHYSICAL","description":"x"};type=application/json')  $(err)"
+E3ID=$(curl -s -X POST $B/api/evidence -H "Authorization: Bearer $TC" -F "metadata={\"caseId\":\"$CN\",\"type\":\"PHYSICAL\",\"description\":\"linked by number\"};type=application/json" | python -c "import sys,json;print(json.load(sys.stdin)['evidenceId'])")
+echo "   register under the just-created case $CN -> evidence $E3ID"
+echo "   the case now lists it (GET /api/cases/{id}):           $(code $B/api/cases/$CASE -H "Authorization: Bearer $TAU")"; python -c "import json;print('   evidenceIds:',json.load(open('body.json'))['evidenceIds'])"
+echo "   and the full-record endpoint:                          $(code $B/api/cases/$CASE/evidence -H "Authorization: Bearer $TAU")"; python -c "import json;print('   linked:',[e['evidenceId'] for e in json.load(open('body.json'))])"
 
 hdr "Database (what is actually stored)"
 docker exec be-postgres psql -U blockevidence -d blockevidence -c "select case_number, status, title from cases order by created_at desc limit 2" 2>&1 | sed 's/^/   /'

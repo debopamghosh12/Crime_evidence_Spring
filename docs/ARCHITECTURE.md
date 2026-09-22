@@ -375,3 +375,15 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
 - **Authentication of ledger writes is unchanged:** still the single backend identity (Org1 admin cert) with the role passed as an argument (C-08). A2 is a design awaiting the owner (`docs/A2_IDENTITY_DESIGN.md`); nothing was implemented, and B1-B5 authenticate exactly as before.
 - **Not built:** E3 (owner's choice pending), A2 (design approved first), D4 (optional), a user-directory endpoint, case-level read access (A5).
 - **Dependencies:** none added in Phase 3. A2 would add BouncyCastle `bcpkix-jdk18on` (needs approval, C-04).
+
+## 14. As built (Phase 3, E3): evidence linked to cases, 2026-09-22
+
+- Flyway `V3__case_evidence_links.sql` (table `case_evidence`, unique on `evidence_id`); model `CaseEvidenceLink`; repository
+  `CaseEvidenceLinkRepository`.
+- **`EvidenceService` now depends on `CaseFileRepository`, `CaseEvidenceLinkRepository` and `Clock`** (new constructor
+  params; this is the one place Phase 3 changed a Phase 2 class, done with the owner's explicit approval). `register` now
+  requires the caseId to name an existing case; every other Phase 2 behaviour is unchanged (proved by the unchanged P2/P2-F
+  regression, TEST_CHECKLIST P3.4/P3-R apart from the added case-creation step).
+- `CaseService` gained a dependency on `EvidenceService` (case -> evidence, one direction, no cycle) for the new
+  `GET /api/cases/{id}/evidence` endpoint; `CaseResponse` gained `evidenceIds`.
+- The ledger and its chaincode are completely unchanged by E3 (still v1.2 seq 3): E3 is entirely off-chain (C-06).

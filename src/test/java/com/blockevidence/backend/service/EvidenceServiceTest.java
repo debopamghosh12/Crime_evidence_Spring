@@ -3,7 +3,10 @@ package com.blockevidence.backend.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -11,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.blockevidence.backend.config.UploadProperties;
@@ -27,6 +31,9 @@ import com.blockevidence.backend.exception.ApiException;
 import com.blockevidence.backend.ledger.InMemoryLedgerService;
 import com.blockevidence.backend.ledger.LedgerException;
 import com.blockevidence.backend.ledger.LedgerService;
+import com.blockevidence.backend.model.CaseFile;
+import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
+import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Role;
 import com.blockevidence.backend.storage.StorageUnavailableException;
@@ -34,11 +41,16 @@ import com.blockevidence.backend.support.FakeIpfsClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * B1-B5, C1-C3 end to end through EvidenceService, using the reference ledger and a fake IPFS node that
  * can be corrupted. Live equivalents against real Kubo are recorded in docs/TEST_CHECKLIST.md.
+ *
+ * <p>E3 (case validation): {@code cases} is stubbed to resolve ANY case number used below to one fixed, existing
+ * case, so every test written before E3 keeps registering evidence exactly as it did; {@link #caseNotFound()}
+ * covers the one new behaviour (an unknown caseId is refused) with its own dedicated stub.
  */
 class EvidenceServiceTest {
 
@@ -47,10 +59,15 @@ class EvidenceServiceTest {
     final InMemoryLedgerService ledger = new InMemoryLedgerService(clock);
     final JsonMapper json = JsonMapper.builder().build();
     final UploadProperties upload = new UploadProperties(List.of("text/plain", "image/png"));
+    final CaseFileRepository cases = mock(CaseFileRepository.class);
+    final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
     final EvidenceService service = build(ledger);
 
     EvidenceService build(LedgerService l) {
-        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload);
+        CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
+        ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
+        lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
+        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload, cases, caseLinks, clock);
     }
 
     AuthenticatedUser user(Role role) {
@@ -116,6 +133,24 @@ class EvidenceServiceTest {
         assertThat(r.metadata().file()).isNull();
         assertThat(service.verify(r.evidenceId()).file()).isNull();
         assertThat(service.verify(r.evidenceId()).status()).isEqualTo(VerificationStatus.VERIFIED);
+    }
+
+    @Test
+    void registeringLinksTheEvidenceToTheCaseAndAnUnknownCaseNumberIsRefusedBeforeAnyStorageWork() {
+        registerDigital();
+        verify(caseLinks, org.mockito.Mockito.times(1)).save(any());   // the happy-path register above created the E3 link
+
+        when(cases.findByCaseNumberIgnoreCase("NO-SUCH-CASE")).thenReturn(Optional.empty());
+        int storedBefore = ipfs.store.size();
+        assertThatThrownBy(() -> service.register(
+                new RegisterEvidenceRequest("NO-SUCH-CASE", EvidenceType.PHYSICAL, "d", null, null, null), null, collector))
+                .isInstanceOfSatisfying(ApiException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("CASE_NOT_FOUND");
+                    assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
+        // Nothing new was pinned to IPFS or linked for the rejected attempt: the case check runs first.
+        assertThat(ipfs.store).hasSize(storedBefore);
+        verify(caseLinks, org.mockito.Mockito.times(1)).save(any());
     }
 
     @Test

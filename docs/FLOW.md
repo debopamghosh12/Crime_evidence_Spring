@@ -209,3 +209,10 @@ The connection is created lazily on first use and survives peer restarts (verifi
 
 ## 16. Cases (E1, E2)
 `/api/cases...` -> JwtAuthFilter -> `@PreAuthorize` MANAGE_CASES for writes (ADMIN, PROSECUTOR), any authenticated user for reads -> `CaseService` (`@Transactional`) -> `CaseFileRepository` / `CaseMemberRepository` / `UserRepository` (PostgreSQL only; the ledger is never called). Lead officer is validated (exists, enabled, a working role) and always a member with role LEAD_OFFICER; changing the lead flips roles in place. Evidence and cases are not linked yet (E3, waiting for the owner).
+
+## 17. Register evidence, updated for E3
+Step 1 of section 7 (register) now starts with `EvidenceService.register` resolving `request.caseId()` against
+`CaseFileRepository.findByCaseNumberIgnoreCase` BEFORE any IPFS work; an unknown case number is `404 CASE_NOT_FOUND` and
+nothing is pinned. After `ledger.createEvidence` succeeds (unchanged from section 7), `CaseEvidenceLinkRepository.save`
+writes the off-chain link row. `GET /api/cases/{id}/evidence` -> `CaseService.evidence` -> `CaseEvidenceLinkRepository` for
+the linked ids -> `EvidenceService.get` for each (the same read path as `findByCid`, one ledger call per item).

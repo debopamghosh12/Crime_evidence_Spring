@@ -3,6 +3,7 @@ package com.blockevidence.backend.service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +28,10 @@ import com.blockevidence.backend.ledger.LedgerException;
 import com.blockevidence.backend.ledger.LedgerHistoryEntry;
 import com.blockevidence.backend.ledger.LedgerNewEvidence;
 import com.blockevidence.backend.ledger.LedgerService;
+import com.blockevidence.backend.model.CaseEvidenceLink;
+import com.blockevidence.backend.model.CaseFile;
+import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
+import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.storage.ContentNotFoundException;
 import com.blockevidence.backend.storage.IpfsClient;
@@ -43,10 +48,13 @@ import tools.jackson.databind.json.JsonMapper;
  * B1-B5, C1, C3: evidence use cases. Called by EvidenceController; talks to the ledger only through
  * LedgerService and to IPFS only through IpfsClient (C-01).
  *
- * <p>Register order (ARCHITECTURE.md 5.4): hash-while-uploading the file to IPFS, then the metadata
- * document to IPFS, and only then the ledger write. The ledger is last so a failure can never leave a
- * ledger entry pointing at content that was never stored. If the ledger write fails, the pins made for it
- * are removed (compensation), except any the ledger still references, see {@link #compensate}.
+ * <p>Register order (ARCHITECTURE.md 5.4): resolve and validate the case (E3) first (cheapest check, so a bad
+ * case number fails before any storage work), then hash-while-uploading the file to IPFS, then the metadata
+ * document to IPFS, and only then the ledger write. The ledger is last so a failure can never leave a ledger
+ * entry pointing at content that was never stored. If the ledger write fails, the pins made for it are removed
+ * (compensation), except any the ledger still references, see {@link #compensate}. After the ledger write
+ * succeeds, the off-chain case link (E3, {@code case_evidence}) is written; the ledger record's own {@code caseId}
+ * string is unaffected if that insert fails (see the E3 write-up for the residual gap this leaves).
  */
 @Service
 public class EvidenceService {
@@ -59,14 +67,20 @@ public class EvidenceService {
     private final VerificationService verification;
     private final JsonMapper json;
     private final UploadProperties upload;
+    private final CaseFileRepository cases;
+    private final CaseEvidenceLinkRepository caseLinks;
+    private final Clock clock;
 
     public EvidenceService(LedgerService ledger, IpfsClient ipfs, VerificationService verification, JsonMapper json,
-            UploadProperties upload) {
+            UploadProperties upload, CaseFileRepository cases, CaseEvidenceLinkRepository caseLinks, Clock clock) {
         this.ledger = ledger;
         this.ipfs = ipfs;
         this.verification = verification;
         this.json = json;
         this.upload = upload;
+        this.cases = cases;
+        this.caseLinks = caseLinks;
+        this.clock = clock;
     }
 
     private record StoredFile(String cid, String sha256, long size, String name, String contentType) {
@@ -97,6 +111,11 @@ public class EvidenceService {
         if (hasFile) {
             requireAllowedContentType(file.getContentType());
         }
+        // E3: the caseId must name a real case (checked first, before any IPFS work is spent). Case-insensitive,
+        // same as the uniqueness check E1 uses, so "the same" number in different letter case still resolves.
+        CaseFile caseFile = cases.findByCaseNumberIgnoreCase(request.caseId()).orElseThrow(() ->
+                new ApiException(HttpStatus.NOT_FOUND, "CASE_NOT_FOUND",
+                        "No case with number '" + request.caseId() + "' exists; create it first (POST /api/cases)"));
 
         LedgerActor actor = actor(user);
         String evidenceId = "EV-" + UUID.randomUUID();
@@ -117,6 +136,9 @@ public class EvidenceService {
             compensate(pinned);
             throw e;
         }
+        // The ledger write succeeded, so the evidence exists and is correct (its own caseId string is the source
+        // of truth) regardless of what happens next; this just makes it findable from the case (E3).
+        caseLinks.save(new CaseEvidenceLink(caseFile.getId(), evidenceId, user.userId(), clock.instant()));
         return get(evidenceId, false);
     }
 
