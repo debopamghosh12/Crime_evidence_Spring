@@ -65,6 +65,10 @@ blockevidence:
     # `openssl rand -base64 32`. Protects every user's stored private key at rest; MasterKey validates the
     # decoded length at startup.
     master-key: ${BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY:}
+  cors:
+    # Frontend integration: the frontend/ Next.js dev server's origin. A comma-separated env value
+    # binds to a list (Spring relaxed binding). Never "*" - see SecurityConfig's corsConfigurationSource.
+    allowed-origins: ${BLOCKEVIDENCE_CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
 # K2: springdoc-openapi generates the spec from the controller/DTO annotations at runtime - nothing here is
 # hand-maintained content, just where it renders. Swagger UI at /swagger-ui.html (redirects to

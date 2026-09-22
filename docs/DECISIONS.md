@@ -561,3 +561,61 @@ tool for verification only) against the real docker-compose stack (real Postgres
 **42/42 requests executed, 0 failed, 20/20 assertions passed**, consistently across all three runs. This
 includes the exact three flows the owner asked to confirm - login, register with encryption, generate a report
 - plus every other endpoint in the API, chained together with real data end to end, not just individually.
+
+## D-069
+
+**Frontend integration scope (owner-directed): keep UI, rewire every data call to the real Spring backend,
+delete what has no backend, add UI for backend features that had none.** The owner supplied a source repo
+(`https://github.com/debopamghosh12/Crime_evidence`) whose `client/` (Next.js 16 / React 19 / Tailwind - NOT
+React 18/MUI as first assumed; corrected after actually reading `client/package.json`, see the earlier mapping
+report) is kept for its UI only. Its own `api/` (Node/Express) and `prisma/` (SQLite schema) are never copied,
+never referenced, never run - confirmed by copying literally only `client/` into a new top-level `frontend/`.
+Full endpoint-by-endpoint comparison (`GOAL`'s Part A/B/C split) is the owner's own explicit scoping, logged
+here because CLAUDE.md asks every tradeoff to be logged even when the owner made the call, not just when I did:
+about a third of the source app's surface (self-registration, QR codes, comments, lab results, generic access
+requests, "CrimeBox" shared-keypair case-joining) has no backend equivalent anywhere in FEATURE_LIST.md and is
+being cut outright rather than stubbed, matching the project's "no dead clicks" principle stated in the goal.
+
+**API base URL: a single shared `frontend/src/lib/api.ts` axios instance, not per-page `${API}` constants.**
+The source repo had two competing, already-broken mechanisms: a `next.config.ts` rewrite to a nonexistent
+`:3001` Express backend, and a per-page `process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"` fallback
+that defaults to Next's OWN dev-server port on failure (a real bug in the source repo, not a design choice to
+preserve). Rejected keeping either: one shared axios instance with `baseURL` read once from
+`NEXT_PUBLIC_API_URL` (`.env.local`, gitignored; `.env.local.example` committed) is a single source of truth,
+and every page migrated onto it is one less place that can silently point at the wrong port. Default is
+`http://localhost:8080`, matching `application.yml`'s `server.port`.
+
+**CORS: an explicit origin allow-list bean, never `"*"`.** Added `CorsProperties`
+(`blockevidence.cors.allowed-origins`, defaulting to `http://localhost:3000`) following the exact
+`@ConfigurationProperties` record pattern already used by `JwtProperties`/`IpfsProperties`/etc., wired into
+`SecurityConfig` via a `CorsConfigurationSource` bean and `.cors(...)` on the filter chain. `allowCredentials`
+is `false` - this API is stateless bearer-token auth, never cookies, so credentialed CORS has nothing to
+protect and enabling it anyway would only widen the attack surface for no benefit. Three existing `@WebMvcTest`
+slice tests (`SecurityAndErrorFormatTest`, `EvidenceControllerTest`, `Phase3ControllersTest`) import
+`SecurityConfig` directly and needed `CorsProperties` added to their `@EnableConfigurationProperties` list,
+exactly as their own comment already explained for `JwtProperties` - a slice test doesn't run
+`@ConfigurationPropertiesScan` from the main class. All 255 tests still pass after the change.
+
+**Two pre-existing local-environment bugs found and fixed while getting the backend running for live
+verification, unrelated to this session's own code changes:** `.env`'s `DB_PASSWORD` no longer matched
+`be-postgres`'s actual container password (rotated in some earlier session without updating `.env` to match -
+Postgres does not re-read `POSTGRES_PASSWORD` against an existing data volume on restart); and `.env` had no
+`DB_URL` at all, so the app silently fell back to `application.yml`'s default of port 5432 - a DIFFERENT,
+unrelated local Postgres install noted as a known trap in `docs/HANDOVER.md` Session 2 ("local Postgres owns
+port 5432 so dev DB is container on 5433") - rather than the intended container on 5433. Fixed both in `.env`
+(gitignored, no code change). Separately, the 6 dev users' password hashes in that Postgres volume predated the
+current `BLOCKEVIDENCE_DEV_SEED_PASSWORD` value (`DevUserSeeder` only sets a password at user CREATION, "left
+untouched" on every later boot per its own doc comment) - reset via direct SQL to a fresh BCrypt hash of the
+current seed password, the same recovery pattern already used and documented in Session 8 for this identical
+class of problem (a long-lived dev Postgres volume drifting from whatever `.env` currently says).
+
+**Verified live (step 4, auth only - Part A's remaining items are still pending):** real Chrome browser,
+`frontend/` on `:3000` against the real Spring backend on `:8080`. Login form now takes email (not the source
+repo's `username`) and posts `POST /api/auth/login`; on success, a follow-up `GET /api/auth/me` fetches the
+profile (the real backend's login response carries tokens only, never a user object) before redirecting to
+`/dashboard/{realUserId}`. Network tab confirmed: CORS preflight `OPTIONS` 200, `POST /api/auth/login` 200,
+`GET /api/auth/me` 200, no other origin ever contacted. Dashboard rendered "Welcome back, Dev COLLECTOR" /
+"Role: COLLECTOR" - both real values from the backend's `MeResponse`, not placeholders. Sign Out cleared the
+session and returned to `/login` cleanly. The only console message was a `fdprocessedid` hydration warning
+(a form-autofill browser extension injecting an attribute before React hydrates) - confirmed unrelated to any
+app code by inspecting the diff itself, a known benign false positive, not investigated further.

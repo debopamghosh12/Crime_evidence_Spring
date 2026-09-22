@@ -1,0 +1,13 @@
+
+> client@0.1.0 lint
+> eslint
+
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\dashboard\custody\page.tsx
+  17:46  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  18:46  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  47:23  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  63:23  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+Γ£û 4 problems (4 errors, 0 warnings)
+

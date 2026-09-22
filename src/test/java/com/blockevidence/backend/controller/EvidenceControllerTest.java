@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import com.blockevidence.backend.TestSecrets;
 import com.blockevidence.backend.config.ClockConfig;
+import com.blockevidence.backend.config.CorsProperties;
 import com.blockevidence.backend.config.JwtProperties;
 import com.blockevidence.backend.domain.EvidenceType;
 import com.blockevidence.backend.dto.RegisterEvidenceRequest;
@@ -55,7 +56,7 @@ import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequ
  * A3, B1-B5, C-02, C-05 at the HTTP layer: the real security chain and method security, with
  * EvidenceService mocked. Verifies who may call what, how requests bind, and how failures are rendered.
  */
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({ JwtProperties.class, CorsProperties.class })
 @WebMvcTest(controllers = EvidenceController.class)
 @Import({ SecurityConfig.class, JwtService.class, ApiAuthenticationEntryPoint.class, ApiAccessDeniedHandler.class,
         ApiErrorWriter.class, GlobalExceptionHandler.class, ClockConfig.class })

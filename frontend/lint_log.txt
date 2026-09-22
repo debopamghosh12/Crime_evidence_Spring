@@ -1,0 +1,59 @@
+
+> client@0.1.0 lint
+> eslint
+
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\dashboard\custody\page.tsx
+   11:5    warning  'FileText' is defined but never used                             @typescript-eslint/no-unused-vars
+   13:5    warning  'ShieldAlert' is defined but never used                          @typescript-eslint/no-unused-vars
+   16:10   warning  'cn' is defined but never used                                   @typescript-eslint/no-unused-vars
+   19:46   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   20:46   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   49:23   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   65:23   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+  126:94   error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  126:112  error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\dashboard\evidence\[id]\page.tsx
+   30:21   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   32:18   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   60:23   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+   72:22   warning  'err' is defined but never used                                  @typescript-eslint/no-unused-vars
+   72:27   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+  260:66   error    Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+  270:96   error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  270:111  error    `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\dashboard\evidence\new\page.tsx
+  63:23  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\dashboard\evidence\page.tsx
+  50:8  warning  React Hook useEffect has a missing dependency: 'fetchEvidence'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\login\page.tsx
+   31:23  error  Unexpected any. Specify a different type                         @typescript-eslint/no-explicit-any
+  130:64  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\app\register\page.tsx
+  45:23  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\context\AuthContext.tsx
+  38:13  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+O:\LaunchPad\PROJECTS\Crime_evidence\client\src\context\AuthContext.tsx:38:13
+  36 |
+  37 |         if (storedToken && storedUser) {
+> 38 |             setToken(storedToken);
+     |             ^^^^^^^^ Avoid calling setState() directly within an effect
+  39 |             setUser(JSON.parse(storedUser));
+  40 |             // Set default auth header for axios
+  41 |             axios.defaults.headers.common["Authorization"] = `Bearer ${storedToken}`;  react-hooks/set-state-in-effect
+
+Γ£û 23 problems (18 errors, 5 warnings)
+

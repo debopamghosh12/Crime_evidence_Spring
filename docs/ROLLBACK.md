@@ -1,5 +1,30 @@
 # Rollback
 
+## Frontend integration (frontend/), written 2026-09-23 BEFORE copying anything
+
+**Revert target:** git tag `v1.0-backend` (commit `cb0b068`, pushed to origin) - the entire backend, chaincode
+and docs/ tree as of the end of Phase 5, before any frontend code existed. Roll back with
+`git reset --hard v1.0-backend && git clean -fd` (this also removes an untracked `frontend/` directory) or,
+if committed, `git revert` the frontend commit(s) specifically.
+
+**What this stage adds:** a new top-level `frontend/` directory (a copy of `client/` from
+`https://github.com/debopamghosh12/Crime_evidence`, with its own `api/`/`prisma/`/root-level Node backend
+deliberately excluded - never copied, never referenced) - entirely new files, nothing existing is touched
+inside it. On the Spring side: one CORS configuration change (`SecurityConfig` or a new `WebMvcConfigurer`
+bean permitting `http://localhost:3000`) - the only backend code this stage touches. No database migration,
+no chaincode change, no existing endpoint's behaviour changes.
+
+**Non-git side effects:** none anticipated - the frontend is a static Next.js dev-server client with no
+build artifacts checked in (`node_modules`/`.next` excluded by `frontend/.gitignore`, matching the source
+repo's own `.gitignore`). If `npm install` is run inside `frontend/`, that installs into
+`frontend/node_modules` only, not tracked by git, safe to delete (`rm -rf frontend/node_modules`) as part of
+any rollback.
+
+**What to re-check after a rollback:** that `SecurityConfig`'s permitted-origins list reverts to whatever it
+was before (or is removed entirely if this was its only entry beyond the docs endpoints from K2); that no
+Spring test was added assuming CORS headers are present (`SecurityAndErrorFormatTest` and friends should be
+unaffected either way, since CORS is a browser-enforced concept, not a server-side authorization check).
+
 ## F2/F3 envelope encryption + key management, written 2026-09-22 BEFORE building it
 
 **Revert target:** git tag `phase5-ready` (commit `92df666`, pushed to origin). Everything below is

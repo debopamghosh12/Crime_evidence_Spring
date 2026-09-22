@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import com.blockevidence.backend.TestSecrets;
 import com.blockevidence.backend.config.ClockConfig;
+import com.blockevidence.backend.config.CorsProperties;
 import com.blockevidence.backend.config.JwtProperties;
 import com.blockevidence.backend.controller.AuthController;
 import com.blockevidence.backend.dto.MeResponse;
@@ -43,7 +44,7 @@ import org.springframework.test.web.servlet.ResultActions;
  * (A1, A3, K1). AuthService is mocked; JwtService is real, so tokens are genuinely signed and verified.
  */
 // A slice test does not process @ConfigurationPropertiesScan from the main class, hence the explicit registration.
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({ JwtProperties.class, CorsProperties.class })
 @WebMvcTest(controllers = { AuthController.class, RbacProbeController.class })
 @Import({ SecurityConfig.class, JwtService.class, ApiAuthenticationEntryPoint.class, ApiAccessDeniedHandler.class,
         ApiErrorWriter.class, GlobalExceptionHandler.class, ClockConfig.class })
