@@ -732,3 +732,23 @@ non-trivial aggregate numbers accumulated across this dev database's whole histo
 a real status/type breakdown) and a real activity feed showing this session's own just-created transfer events
 with correct actor ids/roles/case numbers. Cross-checked `totalEvidence` and `byStatus` against a direct
 `GET /api/dashboard` call - exact match. No console errors on load.
+
+## D-074
+
+**Frontend integration: Notifications + Activity Feed, verified live against real Fabric.** Both rewritten
+against the real `NotificationResponse`/`ActivityEntryResponse` shapes. Two real gaps found while doing it:
+`NotificationResponse` has no boolean `read` field - "read" is derived from `readAt` being non-null, which the
+source repo's shape didn't have at all; and there is **no bulk "mark all read" endpoint** on the backend (the
+source repo called a `PUT .../read-all` that doesn't exist here). Rather than drop the button or fake success,
+`markAllRead` loops the real single-notification endpoint over every currently-unread id
+(`Promise.all(...map(id => api.post(...)))`) - N real calls instead of one, but every one of them genuinely
+happens; nothing here is simulated. Activity Feed's actor display is the same pattern already established for
+custody/evidence: a truncated real user id + real role, never a fabricated display name (no user-lookup
+endpoint, A4 was never built).
+
+**Verified live** (against the real Fabric-backed server): Activity Feed as PROSECUTOR showed this session's
+own real custody-transfer and disposal events, newest first, with correct action colors, real actor ids/roles,
+real reasons, and correct relative timestamps. Notifications as FORENSIC_ANALYST showed 6 real unread items
+(pending transfers, a disposal-approved event, a status change) plus one already-read item rendered dimmed;
+clicking "Mark all read" cleared all 6, confirmed with a direct `GET /api/notifications` call afterward showing
+`0 unread / 7` total - the loop-of-real-calls approach genuinely persisted, not just updated client-side state.

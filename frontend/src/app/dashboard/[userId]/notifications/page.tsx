@@ -1,28 +1,24 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import axios from "axios";
-import { useAuth } from "@/context/AuthContext";
-import { Bell, Check, CheckCheck, Loader2, Info, AlertTriangle, ShieldCheck } from "lucide-react";
+import api from "@/lib/api";
+import { Bell, CheckCheck, Loader2, Info, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import LottieLoader from "@/components/ui/LottieLoader";
 
+// Matches com.blockevidence.backend.dto.NotificationResponse exactly (GET /api/notifications, H4) -
+// "read" is derived from readAt being non-null, not a separate boolean field. type is one of the real
+// notification types (transfer received, status change, disposal event, tamper alert).
 interface Notification {
   id: string;
   type: string;
-  title: string;
+  evidenceId: string | null;
+  caseId: string | null;
   message: string;
-  read: boolean;
-  link?: string;
   createdAt: string;
+  readAt: string | null;
 }
-
-const TYPE_ICON: Record<string, React.ReactNode> = {
-  access_request: <AlertTriangle className="h-4 w-4 text-amber-400" />,
-  access_request_reviewed: <ShieldCheck className="h-4 w-4 text-green-400" />,
-  default: <Info className="h-4 w-4 text-blue-400" />,
-};
 
 function timeAgo(date: string) {
   const secs = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -33,50 +29,44 @@ function timeAgo(date: string) {
 }
 
 export default function NotificationsPage() {
-  const { token } = useAuth();
   const params = useParams();
   const userId = params.userId as string;
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [marking, setMarking] = useState(false);
 
-  const fetch = useCallback(async () => {
-    if (!token) return;
+  const fetchNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await axios.get(`${API}/api/v1/notifications`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setNotifications(r.data.notifications || []);
+      const r = await api.get("/api/notifications", { params: { size: 50 } });
+      setNotifications(r.data.items || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [token]);
+  }, []);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+
+  const markRead = async (id: string) => {
+    try {
+      await api.post(`/api/notifications/${id}/read`);
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, readAt: new Date().toISOString() } : n));
+    } catch (e) { console.error(e); }
+  };
 
   const markAllRead = async () => {
+    // No bulk endpoint exists on the backend - each unread notification is marked individually
+    // (real calls, not simulated), not a single fake "read-all" request.
     setMarking(true);
+    const unreadIds = notifications.filter(n => !n.readAt).map(n => n.id);
     try {
-      await axios.put(`${API}/api/v1/notifications/read-all`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      await Promise.all(unreadIds.map(id => api.post(`/api/notifications/${id}/read`)));
+      setNotifications(prev => prev.map(n => unreadIds.includes(n.id) ? { ...n, readAt: new Date().toISOString() } : n));
     } catch (e) { console.error(e); }
     finally { setMarking(false); }
   };
 
-  const markRead = async (id: string) => {
-    try {
-      await axios.put(`${API}/api/v1/notifications/${id}/read`, {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-    } catch (e) { console.error(e); }
-  };
-
-  const unread = notifications.filter(n => !n.read).length;
+  const unread = notifications.filter(n => !n.readAt).length;
 
   return (
     <div className="space-y-6">
@@ -110,31 +100,33 @@ export default function NotificationsPage() {
       ) : (
         <div className="space-y-2">
           {notifications.map(n => {
-            const icon = TYPE_ICON[n.type] || TYPE_ICON.default;
+            const isRead = !!n.readAt;
+            const icon = n.type === "TAMPER_ALERT"
+              ? <AlertTriangle className="h-4 w-4 text-destructive" />
+              : <Info className="h-4 w-4 text-blue-400" />;
             const content = (
               <div
-                key={n.id}
-                onClick={() => !n.read && markRead(n.id)}
-                className={`flex items-start gap-4 p-4 rounded-xl border transition-all cursor-pointer hover:border-primary/30 ${n.read ? "border-border bg-card opacity-60" : "border-primary/20 bg-primary/5"
+                onClick={() => !isRead && markRead(n.id)}
+                className={`flex items-start gap-4 p-4 rounded-xl border transition-all cursor-pointer hover:border-primary/30 ${isRead ? "border-border bg-card opacity-60" : "border-primary/20 bg-primary/5"
                   }`}
               >
                 <div className="mt-0.5 shrink-0">{icon}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-foreground">{n.title}</p>
+                    <p className="text-sm font-semibold text-foreground">{n.type.replace(/_/g, " ")}</p>
                     <span className="text-xs text-muted-foreground shrink-0">{timeAgo(n.createdAt)}</span>
                   </div>
                   <p className="text-sm text-muted-foreground mt-0.5">{n.message}</p>
                 </div>
-                {!n.read && <div className="w-2 h-2 rounded-full bg-primary shrink-0 mt-1.5" />}
+                {!isRead && <div className="w-2 h-2 rounded-full bg-primary shrink-0 mt-1.5" />}
               </div>
             );
 
-            return n.link ? (
-              <Link href={n.link} key={n.id} onClick={() => !n.read && markRead(n.id)}>
+            return n.evidenceId ? (
+              <Link href={`/dashboard/${userId}/evidence/${n.evidenceId}`} key={n.id} onClick={() => !isRead && markRead(n.id)}>
                 {content}
               </Link>
-            ) : content;
+            ) : <div key={n.id}>{content}</div>;
           })}
         </div>
       )}
