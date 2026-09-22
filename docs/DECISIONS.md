@@ -432,3 +432,79 @@ precedence logic (TAMPERED > NOT_FOUND > VERIFIED) was also left alone: `Evidenc
 - already strong, documented coverage, not a gap.
 
 253 Java tests total (18 new).
+
+## D-066 — L2: Testcontainers Postgres + the existing FakeIpfsClient/memory-ledger, no WireMock (2026-09-22)
+FEATURE_LIST's own tech column for L2 already says "Real Postgres and MOCKED IPFS/Fabric" - Testcontainers was
+never meant to run Fabric, only Postgres. Added `spring-boot-testcontainers`/`testcontainers-junit-jupiter`/
+`testcontainers-postgresql` (owner-approved: the user's own instruction named Testcontainers explicitly).
+Pinned `testcontainers.version=1.21.3` explicitly: Spring Boot 4.1.1's own BOM names `2.0.5`, but no such
+artifact is published on Maven Central (checked live against search.maven.org) - 1.21.3 is the actual latest
+release.
+
+**Rejected: WireMock**, despite FEATURE_LIST naming it, for IPFS mocking specifically. `HttpIpfsClientTest`
+already thoroughly covers `HttpIpfsClient`'s own HTTP-level behaviour (add/cat/pin-rm/version, various
+success/failure/timeout cases) using a plain JDK `com.sun.net.httpserver.HttpServer` - a real HTTP server, zero
+dependency, already proven in this codebase. Adding WireMock on top would duplicate that exact coverage for no
+new signal. Fabric is mocked by the already-built `memory-ledger` profile (`InMemoryLedgerService`); IPFS by the
+already-built `FakeIpfsClient` (overriding the real `HttpIpfsClient` bean via a `@TestConfiguration` `@Primary`
+bean in the integration test) - both are the SAME doubles every other test in this suite already trusts, not new
+mocking infrastructure.
+
+New `integration/EvidenceRegistrationIntegrationTest`: `@SpringBootTest` + `@AutoConfigureMockMvc` +
+`@Testcontainers` (a real Postgres 16 container, real Flyway migrations V1-V6 actually running) + `@Transactional`
+(rolls back every write, including through MockMvc-triggered service calls, so the class-shared static container
+stays clean between test methods - the standard Spring Testing pattern for this). Covers login -> create a case
+-> register DIGITAL evidence (real multipart upload) -> read it back -> verify() -> confirm the case genuinely
+lists it, through the REAL HTTP surface and REAL security filter chain - coverage no unit test offers (a real
+Flyway migration bug, a real JPA mapping bug, or a real security-filter-chain break would all be invisible to a
+mocked-repository unit test but caught here). Found live, fixed before this was "done": the test's own seeded
+users needed `UserKeyService.provision()` called explicitly (F2/F3 mandates a wrapped key for the registrant;
+`DevUserSeeder` does this in production, a test inserting users directly must do it too) - without it,
+`register()` 500'd with an unhandled `IllegalStateException`, not a clean 4xx, confirming this is a real edge
+worth having caught. 255 Java tests total.
+
+## D-067 — L3: Compose for backend+Postgres+IPFS; Fabric stays a documented separate WSL step (2026-09-22)
+Owner-requested risk assessment before writing any Compose/Testcontainers code, given what this session already
+found about how fragile Fabric's own bootstrap is (D-060/D-061: a lost CA registrar secret and a `maxenrollments`
+trap that silently prevents re-enrollment, both requiring real operator intervention even with previously-working
+state). Investigated concretely rather than guessing: `docker info` confirmed WSL's Docker CLI and the Windows
+side share one Docker Desktop engine, so Fabric's containers are not inherently WSL-bound - a point in favour.
+But `fabric-samples/test-network/network.sh` (684 lines) revealed that even Hyperledger's own reference tooling
+does not reduce network bring-up to `docker compose up`: it is crypto-material generation (cryptogen/fabric-ca,
+before any container starts), THEN `docker compose up` for peers/orderer, THEN a separate `scripts/
+createChannel.sh` with explicit `MAX_RETRY`/`CLI_DELAY` retry loops, THEN a separate `scripts/deployCC.sh` with
+the same retry pattern across both orgs. This project adds MORE on top with zero existing automation: the custom
+`evidence` chaincode's deployment, the CA registrar bootstrap, and per-user wallet enrollment - exactly the three
+things that needed real firefighting this session, twice, with EXISTING crypto material. Automating all of that
+reliably enough to survive a genuine, repeatable cold `docker compose up` is new engineering, not wiring together
+existing pieces, and carries real risk of a new variant of the same class of CA/MSP sequencing problem, on a
+final-year-project timeline with a working WSL-hosted alternative already proven repeatedly this session.
+
+**Chose the fallback, owner-approved after the risk assessment was presented:** `docker-compose.yml` for
+backend+Postgres+IPFS only, defaulting to the `memory-ledger` profile so `docker compose up` alone is a complete,
+self-contained working demo - registration, encryption, search, dashboards, the PDF report, everything except a
+real chain underneath. Fabric stays a documented separate step (`docs/FABRIC_RUNBOOK.md`, already proven); an
+operator with that network running can point this stack at it by editing `.env`.
+
+**New files:** `Dockerfile` (multi-stage: `eclipse-temurin:21-jdk` build stage using this project's own Maven
+Wrapper - not a bare `maven:*` image, so the container build uses the identical toolchain as everywhere else;
+`eclipse-temurin:21-jre` runtime, non-root user, `curl` added only for the healthcheck), `docker-compose.yml`
+(postgres:16-alpine, `ipfs/kubo:v0.43.0` run with `--offline` per C-09 - never reproduce the public-network
+mistake D-020 found, just because it is convenient to leave the flag off - and `backend` built from the
+Dockerfile, `depends_on: condition: service_healthy` on both), `.env.example` (checked in) / `.env` (gitignored,
+C-07 - no secret defaults committed).
+
+**Verified with a genuine cold start** (`docker compose down -v` first, then `docker compose up --build` from
+nothing): 3m31s total (dominated by the JDK base image pull, ~59s, and `dependency:go-offline`, ~104s - the
+actual application build is under 10s). All three containers reported healthy in the correct dependency order;
+logged in as a seeded dev user, registered DIGITAL evidence through the real multipart endpoint, and confirmed
+`verify()` returned VERIFIED - the full encrypt/pin/hash/verify pipeline working inside the containerized stack,
+not just against the WSL-hosted setup this session used everywhere else.
+
+**Found live, documented as a real, honest limit, not glossed over:** a warm restart (`docker compose down`
+without `-v`, then `up` again - containers recreated, volumes kept) proved that Postgres-native data (users,
+cases) survives, but the evidence record itself does NOT: `memory-ledger` is a pure in-JVM-memory structure with
+no persistence of its own (its own startup log already says so - "loses all data on restart"), and a fresh
+backend container is a fresh JVM. This is not a bug in the compose file; it is the documented nature of the
+reference ledger, now made concrete: anyone using this stack for a demo must not restart the `backend` service
+mid-demo, or re-register evidence afterward. Connecting to a real, persistent Fabric network removes this limit.

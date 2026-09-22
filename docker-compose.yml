@@ -1,0 +1,80 @@
+# L3 (FEATURE_LIST): one command for the backend, Postgres and IPFS.
+#
+# Fabric is deliberately NOT part of this file - see docs/features/l3-docker-compose.md for the full reasoning
+# (DECISIONS D-067). This stack runs the `memory-ledger` reference ledger by default (SPRING_PROFILES_ACTIVE
+# below), so `docker compose up` alone is a complete, working demo - login, register evidence, custody, search,
+# dashboards, encryption, the PDF report - everything except a real blockchain underneath it. A real Fabric
+# network is available as a separate, already-proven step (docs/FABRIC_RUNBOOK.md); once it is running, point
+# this stack at it instead by editing .env (see .env.example) and removing "memory-ledger" from
+# SPRING_PROFILES_ACTIVE.
+#
+# Known limit, found live (DECISIONS D-067): memory-ledger has no persistence of its own - it is a plain
+# in-JVM-memory structure. Postgres-native data (users, cases) survives a `docker compose down` (without -v)
+# and `up` again; evidence records do NOT, since a fresh backend container is a fresh, empty ledger. Do not
+# restart the backend service mid-demo. A real Fabric network does not have this limit.
+#
+# First run: `cp .env.example .env`, fill in the two required secrets (see the comments in that file), then
+# `docker compose up --build`.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: blockevidence
+      POSTGRES_USER: blockevidence
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blockevidence -d blockevidence"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5433:5432" # host-side port matches the one every live-verification script in this project already uses
+
+  ipfs:
+    image: ipfs/kubo:v0.43.0
+    # C-09: never run outside --offline. A default (online) node joins the public IPFS network and serves
+    # anything pinned on it to anyone who learns the CID (DECISIONS D-020) - this compose file must not
+    # reproduce that mistake just because it is convenient to leave the flag off.
+    command: ["daemon", "--offline"]
+    volumes:
+      - ipfs-data:/data/ipfs
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5001:5001"
+
+  backend:
+    build: .
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/blockevidence
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      IPFS_API_URL: http://ipfs:5001
+      BLOCKEVIDENCE_JWT_SECRET: ${BLOCKEVIDENCE_JWT_SECRET:?set BLOCKEVIDENCE_JWT_SECRET in .env}
+      BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY: ${BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY:?set BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY in .env}
+      BLOCKEVIDENCE_DEV_SEED_PASSWORD: ${BLOCKEVIDENCE_DEV_SEED_PASSWORD:-demo-password-change-me}
+      # dev: seeds one demo user per role on first boot (DevUserSeeder). memory-ledger: the reference ledger,
+      # so this stack is fully self-contained - drop it once pointed at a real Fabric network (see file header).
+      SPRING_PROFILES_ACTIVE: dev,memory-ledger
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  postgres-data:
+  ipfs-data:

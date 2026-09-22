@@ -959,6 +959,55 @@ against (`java.sql.Timestamp`, a plain `Instant`, and the string-parse fallback 
 testing against one real Postgres driver only ever exercised one of the three.
 
 
+## P5-L2L3. Phase 5: integration tests + Docker Compose (L2, L3) — 2026-09-22
+
+Owner-requested Fabric-in-Compose risk assessment done and reported BEFORE any Compose/Testcontainers code was
+written (DECISIONS D-067) - concluded real risk, owner approved the backend+Postgres+IPFS-only fallback.
+
+**L2 (`EvidenceRegistrationIntegrationTest`, real Testcontainers Postgres + mocked Fabric/IPFS):**
+```
+[main] INFO org.testcontainers.DockerClientFactory -- Connected to docker: Server Version: 28.3.2
+[main] INFO tc.postgres:16-alpine -- Container postgres:16-alpine started in PT3.2761588S
+[main] INFO o.f.core.internal.command.DbMigrate -- Successfully applied 6 migrations to schema "public", now at version v6
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 19.47 s -- EvidenceRegistrationIntegrationTest
+
+Tests run: 255, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+Both real Flyway migrations (V1-V6) and the full register->read-back->verify flow ran against a genuine,
+freshly-created Postgres 16.10 container - not a stub.
+
+**L3 (genuine cold start, `docker compose down -v` then `docker compose up --build` from nothing):**
+```
+real    3m31.162s
+```
+All three containers reported healthy in dependency order (postgres/ipfs healthy first, then backend):
+```
+$ curl -s http://localhost:8080/actuator/health
+{"groups":["liveness","readiness"],"status":"UP"}
+
+$ curl -s -X POST http://localhost:8080/api/auth/login -d '{"email":"collector@blockevidence.local", ...}'
+{"accessToken":"...", ...}                                          <- DevUserSeeder ran inside the container
+
+$ curl -s -X POST http://localhost:8080/api/evidence -F metadata=... -F file=@l3test.bin
+{"evidenceId":"EV-b9b17810-...","fileCid":"bafkrei...","fileSha256":"5a1bef54...", ...}   <- 201, registered
+
+$ curl -s http://localhost:8080/api/evidence/EV-b9b17810-.../verify
+{"status":"VERIFIED", "file":{"result":"VERIFIED"}, "metadata":{"result":"VERIFIED"}}
+```
+The full encrypt/pin/hash/verify pipeline (F2/F3, C2) working inside the containerized stack itself.
+
+### Warm restart, found live (see DECISIONS D-067, documented as a real limit)
+`docker compose down` (no `-v`) then `up` again:
+```
+Case "L3-COMPOSE-1" (Postgres-native): survived        -> GET /api/cases still lists it
+Evidence EV-b9b17810-... (memory-ledger): LOST         -> GET .../{id} -> 404, /verify -> 404
+```
+`memory-ledger` has no persistence of its own (a plain in-JVM-memory structure); a fresh backend container is a
+fresh, empty ledger. Not a compose bug - the documented nature of the reference ledger, now demonstrated
+concretely and written into `docker-compose.yml` itself as a warning, not left as a surprise.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

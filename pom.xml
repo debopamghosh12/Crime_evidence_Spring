@@ -39,6 +39,10 @@
 		<!-- I1, owner-approved (C-04): OpenPDF, not iText - LGPL/MPL, free for any use, unlike modern iText
 		     (AGPL or commercial-licensed). -->
 		<openpdf.version>2.2.2</openpdf.version>
+		<!-- L2: Spring Boot 4.1.1's own BOM names testcontainers.version=2.0.5, but no such artifact is
+		     published on Maven Central (checked live) - pinned here instead to 1.21.3, the actual latest
+		     released version, same convention as bcpkix.version/openpdf.version. -->
+		<testcontainers.version>1.21.3</testcontainers.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -107,6 +111,23 @@
 			<groupId>com.github.librepdf</groupId>
 			<artifactId>openpdf</artifactId>
 			<version>${openpdf.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-testcontainers</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${testcontainers.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>postgresql</artifactId>
+			<version>${testcontainers.version}</version>
+			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>

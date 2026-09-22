@@ -26,11 +26,19 @@
   `ActivityService`'s caseId/page-size branching, D-065) - deliberately did NOT add Criteria-API-mocking tests
   for `EvidenceProjectionSpecifications`/`AuditSpecifications` (that needs a real database to mean anything,
   which is what L2 is for) or more `VerificationService.overall()` coverage (already strong via
-  `EvidenceServiceTest`). 253 Java tests total. Committed: `9445edf` (F4+F2/F3), `a656a52` (F2/F3 real-Fabric
-  docs), `e361dce` (F5), `d071c4e` (I1); L1 not yet committed - see Left.
-- **Left:** L1's 3 new test files are uncommitted (pending this session's own review pass); L2, L3, K2 not
-  started - L2/L3 blocked on reporting back to the owner (requested) whether containerizing Fabric into Compose
-  is safe to attempt or too risky for the time available, before writing any Compose/Testcontainers code.
+  `EvidenceServiceTest`). Then did the owner-requested Fabric-in-Compose risk assessment BEFORE writing any
+  Compose code: grounded in `network.sh`'s own 684-line, multi-stage, retry-looped bootstrap plus this session's
+  A2 CA/wallet fragility, concluded real risk; owner approved the fallback. Built L2 (Testcontainers Postgres,
+  mocked Fabric/IPFS via the already-existing `memory-ledger`/`FakeIpfsClient` - rejected WireMock, redundant
+  with `HttpIpfsClientTest`'s existing JDK-`HttpServer` coverage, D-066) and L3 (`Dockerfile` +
+  `docker-compose.yml` for backend+Postgres+IPFS, Fabric left a documented separate WSL step, D-067) together.
+  Verified L3 with a genuine cold start (`docker compose down -v` then `up --build`, 3m31s, all containers
+  healthy, register/encrypt/verify all worked inside the containers) and found, live, a real limit: a backend
+  container restart loses all `memory-ledger` evidence data (Postgres data survives) - documented in the compose
+  file itself. 255 Java tests total. Committed: `9445edf` (F4+F2/F3), `a656a52` (F2/F3 real-Fabric docs),
+  `e361dce` (F5), `d071c4e` (I1), `136920e` (L1); L2/L3 not yet committed - see Left.
+- **Left:** L2/L3's new files are uncommitted (pending this session's own review pass); K2 (springdoc/Postman)
+  not started - the last item.
 - **Fixed mid-session, not a standing issue:** the first real-Fabric attempt 500'd with `AEADBadTagException` -
   a fresh random master key had been generated for that run, but the collector's RSA private key was already
   persisted in Postgres under the EARLIER run's master key; fixed by reusing the same key (it must stay stable
@@ -42,10 +50,8 @@
   reproduce this same recovery scramble - re-enrolling once more only needs `identity modify --secret`, not this
   session's two-step recovery. The scratch wallet/env files used for this session's verification are in this
   session's scratchpad only, not the repo.
-- **Next session start:** report the Fabric-in-Compose risk assessment the owner asked for (given the A2
-  registrar/wallet fragility found this session), then build L2+L3 together if judged safe, or the
-  backend+Postgres+IPFS-only Compose fallback with Fabric left as a documented separate WSL step if not. Then K2
-  (springdoc/Postman) last. No outstanding Fabric/wallet blocker remains.
+- **Next session start:** commit L2/L3, then build K2 (springdoc-openapi/Swagger UI + an updated Postman
+  collection with a baseUrl environment) - the last item in this phase. No outstanding Fabric/wallet blocker.
 
 > **Date correction (2026-09-22, local IST):** sessions 3 and 4 were first dated 2026-09-23/24 and 2026-09-25 in several docs, dates I inferred without reading a clock. The machine clock and every log/ledger timestamp show all of this work happened on the night of 2026-09-21 (UTC) / 2026-09-22 (IST). All doc dates were corrected to 2026-09-22; the UTC timestamps inside logs and on the ledger were never touched.
 
