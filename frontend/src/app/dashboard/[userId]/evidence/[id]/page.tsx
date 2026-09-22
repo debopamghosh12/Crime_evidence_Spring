@@ -166,6 +166,32 @@ export default function EvidenceDetailPage() {
         }
     };
 
+    const [reportGenerating, setReportGenerating] = useState(false);
+    const [reportError, setReportError] = useState("");
+
+    const handleReport = async () => {
+        if (!evidence) return;
+        setReportGenerating(true);
+        setReportError("");
+        try {
+            // I1: built entirely from the ledger + a fresh verify() result - deliberately needs NO
+            // content key, same as Verify Integrity above. A Judge/Auditor never wrapped in for this
+            // item's content generates the exact same report as one who was.
+            const response = await api.get(`/api/evidence/${id}/report`, { responseType: "blob" });
+            const url = window.URL.createObjectURL(new Blob([response.data], { type: "application/pdf" }));
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${evidence.evidenceId}-chain-of-custody.pdf`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        } catch (error: unknown) {
+            const err = error as { response?: { data?: { message?: string } } };
+            setReportError(err.response?.data?.message || "Report generation failed");
+        } finally {
+            setReportGenerating(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex h-64 items-center justify-center">
@@ -299,10 +325,11 @@ export default function EvidenceDetailPage() {
                         Verify Integrity
                     </button>
                     <button
-                        disabled
-                        title="Wired later in this integration pass (Part A: report)"
-                        className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md opacity-50 cursor-not-allowed"
+                        onClick={handleReport}
+                        disabled={reportGenerating}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
                     >
+                        {reportGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                         Generate Report
                     </button>
                 </div>
@@ -311,6 +338,12 @@ export default function EvidenceDetailPage() {
             {downloadError && (
                 <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
                     {downloadError}
+                </div>
+            )}
+
+            {reportError && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
+                    {reportError}
                 </div>
             )}
 

@@ -770,3 +770,18 @@ panel says "Metadata unavailable" (PROSECUTOR was never wrapped in for this item
 verification still came back **VERIFIED** on both file and metadata, with expected/actual hashes matching
 exactly. A user with zero content-key access got a complete, trustworthy integrity result, live, through the
 UI - proof C2 genuinely needs no content key, not just a claim in a comment.
+
+## D-076
+
+**Frontend integration: Report - the last item of Part A - wired the "Generate Report" placeholder button left
+disabled since the evidence-register/view checkpoint.** `GET /api/evidence/{id}/report` (I1) returns
+`application/pdf` directly (not JSON), so `handleReport` mirrors `handleDownload`'s blob-download pattern
+exactly rather than the plain JSON calls used everywhere else on this page.
+
+**Verified live** (as PROSECUTOR - the same role D-075 just proved has no content-key access to this item):
+clicked Generate Report, a real PDF downloaded (confirmed: `file` reports "PDF document, version 1.5, 2
+page(s)"). Rather than stop at "a PDF downloaded," decompressed its internal streams and confirmed the real
+66-character Fabric transaction id from D-071's registration (`ec24c39b...`) appears verbatim inside - the
+report is built from real ledger data, not a template with placeholder values. This closes Part A: every item
+in the owner's original order (auth, evidence register/view, custody transfer, cases, dashboard,
+notifications/activity, verify, report) is now wired and verified live against the real Fabric-backed backend.
