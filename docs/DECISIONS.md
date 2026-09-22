@@ -619,3 +619,45 @@ profile (the real backend's login response carries tokens only, never a user obj
 session and returned to `/login` cleanly. The only console message was a `fdprocessedid` hydration warning
 (a form-autofill browser extension injecting an attribute before React hydrates) - confirmed unrelated to any
 app code by inspecting the diff itself, a known benign false positive, not investigated further.
+
+## D-070
+
+**Frontend integration: evidence register/view + custody transfer (both steps), verified live end to end.**
+`evidence/new/page.tsx` now sends a multipart request shaped exactly like `RegisterEvidenceRequest` - a
+`"metadata"` JSON part (`caseId`/`type`/`description`/`location`/`collectedAt`/`notes`) plus, for DIGITAL only,
+a single `"file"` part - replacing the source repo's flat form fields and `"files"` array entirely; the
+"Testimonial" evidence-type option was dropped (the backend's `EvidenceType` enum has only PHYSICAL/DIGITAL).
+`evidence/page.tsx` (list) and `evidence/[id]/page.tsx` (detail) were rewritten against the real
+`EvidenceSearchResult`/`EvidenceResponse` shapes - both use plain user-id strings for custodian/creator, not
+nested `{fullName}` objects (no user-lookup endpoint exists, A4 was never built), so the UI shows a truncated
+id rather than inventing a name. `custody/page.tsx` was rewritten against the real
+`GET /api/transfers/pending` (`PendingTransferResponse[]`): there is no separate "transfer id" in this design
+(one pending transfer lives on the evidence record itself), so accept/reject are keyed by `evidenceId` +
+`expectedVersion`, not a transfer id as the source repo assumed. The backend also has no "my outgoing pending
+transfers" endpoint - rather than fabricate one client-side, the Outgoing panel was replaced with a one-line
+note saying so (§ goal's "no dead click" principle applied to a whole panel, not just a button).
+
+**Found and fixed while verifying live, none caused by this session's own code:**
+1. `be-ipfs` (Docker) was stopped from the prior K2 session - register failed with a real, correctly-surfaced
+   backend error (`"IPFS node not reachable while storing content"`), proving the error-message plumbing works
+   end to end before the fix (started the container) was even applied.
+2. The collector's RSA private key in Postgres was encrypted under an EARLIER session's master key (the exact
+   class of drift Session 8 already hit and documented) - registering under the CURRENT `.env` master key threw
+   `AEADBadTagException` on decrypt. Fixed the same way: cleared `user_keys`/`evidence_content_keys` (dev/test
+   key material only, not evidence) and restarted so `DevUserSeeder` reprovisioned fresh keys.
+3. `custody/page.tsx`'s `handleApprove`/`handleReject` (kept from the source repo) called native
+   `confirm()`/`alert()`/`prompt()`. These block the ENTIRE page - including this session's own CDP-driven
+   browser automation, which hung on a `computer:screenshot` call after a click that had actually already
+   succeeded server-side (confirmed independently via a direct API call while the tab was stuck). Root cause,
+   not just a symptom to work around: blocking dialogs are bad UI practice regardless of who's driving the
+   browser. Replaced with inline state (a dismissable success/error banner, an inline note field for reject)
+   in every file touched this pass - not just here.
+
+**Verified live, in order:** registered a real DIGITAL item with a real uploaded file as COLLECTOR - the
+returned `fileSha256` matched the backend's own `/verify` endpoint's `actualSha256` exactly (VERIFIED on both
+file and metadata), and downloading the file back (F2/F3 decrypt-on-download) produced a byte-identical copy of
+the original upload (`diff` confirmed). Then initiated a transfer to FORENSIC_ANALYST, accepted it in a second
+browser session as that user (custody moved: `currentCustodian` changed, `version` incremented, confirmed via
+direct API call since the accepting tab was stuck on the alert() bug above), then initiated a transfer back and
+rejected it with a note (custody correctly stayed with the sender). Every step cross-checked against the real
+backend directly, not just trusted from the UI.

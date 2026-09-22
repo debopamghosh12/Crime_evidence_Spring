@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
-import { Lock, AlertCircle, Loader2, ShieldCheck, ArrowRight, BadgeCheck } from "lucide-react";
+import { Lock, AlertCircle, Loader2, ArrowRight, BadgeCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";

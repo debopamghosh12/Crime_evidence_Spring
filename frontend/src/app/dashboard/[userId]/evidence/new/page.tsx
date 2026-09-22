@@ -1,32 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import axios from "axios";
+import api from "@/lib/api";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, Save, Loader2, UploadCloud } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { useCrimeBox } from "@/context/CrimeBoxContext";
 
+// B1: the real backend takes a multipart request with a JSON part named "metadata" (matching
+// RegisterEvidenceRequest exactly) plus, for DIGITAL only, a single binary part named "file" -
+// never the source repo's flat form fields or a "files" array. caseId is the case NUMBER string
+// (e.g. "FE-TEST-001"), resolved server-side against an EXISTING case (E3) - registration fails
+// with 404 if no such case exists yet.
 export default function NewEvidencePage() {
     const router = useRouter();
     const params = useParams();
-    const { permission, activeBox } = useCrimeBox();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const userId = params.userId as string;
 
-    // ... permission check ...
-
-    const [files, setFiles] = useState<FileList | null>(null);
+    const [file, setFile] = useState<File | null>(null);
 
     const [formData, setFormData] = useState({
-        caseId: activeBox?.caseId || "", // Pre-fill from active box
-        type: "Physical",
+        caseId: "",
+        type: "PHYSICAL",
         description: "",
-        collectionDate: new Date().toISOString().split("T")[0],
+        collectedAt: new Date().toISOString().split("T")[0],
         location: "",
-        officerNotes: "",
+        notes: "",
     });
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -34,9 +35,7 @@ export default function NewEvidencePage() {
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files.length > 0) {
-            setFiles(e.target.files);
-        }
+        setFile(e.target.files && e.target.files.length > 0 ? e.target.files[0] : null);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -45,29 +44,26 @@ export default function NewEvidencePage() {
         setError("");
 
         try {
+            const metadata = {
+                caseId: formData.caseId,
+                type: formData.type,
+                description: formData.description,
+                location: formData.location || undefined,
+                collectedAt: new Date(formData.collectedAt).toISOString(),
+                notes: formData.notes || undefined,
+            };
+
             const data = new FormData();
-            data.append("caseId", formData.caseId);
-            data.append("type", formData.type);
-            data.append("description", formData.description);
-            data.append("collectionDate", new Date(formData.collectionDate).toISOString());
-            data.append("location", formData.location);
-            if (formData.officerNotes) data.append("officerNotes", formData.officerNotes);
-
-            if (files) {
-                for (let i = 0; i < files.length; i++) {
-                    data.append("files", files[i]);
-                }
+            // A JSON part, not flat fields - RegisterEvidenceRequest is bound from @RequestPart("metadata").
+            data.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+            if (formData.type === "DIGITAL" && file) {
+                data.append("file", file);
             }
 
-            const response = await axios.post("/api/v1/evidence", data, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
-
-            if (response.data.success) {
-                router.push(`/dashboard/${userId}/evidence`);
-            }
+            const response = await api.post("/api/evidence", data);
+            router.push(`/dashboard/${userId}/evidence/${response.data.evidenceId}`);
         } catch (err: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            setError(err.response?.data?.error || "Failed to register evidence.");
+            setError(err.response?.data?.message || "Failed to register evidence.");
         } finally {
             setLoading(false);
         }
@@ -92,22 +88,18 @@ export default function NewEvidencePage() {
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="grid gap-6 md:grid-cols-2">
                         <div className="space-y-2">
-                            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 flex justify-between">
-                                Case ID
-                                {activeBox && <span className="text-xs text-primary font-mono lowercase tracking-wide">(locked to active box)</span>}
+                            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                Case Number
                             </label>
                             <input
                                 name="caseId"
                                 required
-                                placeholder="CASE-2024-001"
-                                className={cn(
-                                    "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
-                                    activeBox && "opacity-70 cursor-not-allowed border-primary/50 text-primary font-bold"
-                                )}
+                                placeholder="FE-TEST-001"
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={formData.caseId}
                                 onChange={handleChange}
-                                readOnly={!!activeBox}
                             />
+                            <p className="text-xs text-muted-foreground">Must already exist (Cases page).</p>
                         </div>
 
                         <div className="space-y-2">
@@ -120,9 +112,8 @@ export default function NewEvidencePage() {
                                 value={formData.type}
                                 onChange={handleChange}
                             >
-                                <option value="Physical">Physical Object</option>
-                                <option value="Digital">Digital File</option>
-                                <option value="Testimonial">Document / Transcript</option>
+                                <option value="PHYSICAL">Physical</option>
+                                <option value="DIGITAL">Digital (file upload)</option>
                             </select>
                         </div>
 
@@ -132,10 +123,10 @@ export default function NewEvidencePage() {
                             </label>
                             <input
                                 type="date"
-                                name="collectionDate"
+                                name="collectedAt"
                                 required
                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                                value={formData.collectionDate}
+                                value={formData.collectedAt}
                                 onChange={handleChange}
                             />
                         </div>
@@ -147,7 +138,6 @@ export default function NewEvidencePage() {
                             <input
                                 type="text"
                                 name="location"
-                                required
                                 placeholder="123 Crime Scene Blvd, Room 4"
                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                                 value={formData.location}
@@ -171,34 +161,36 @@ export default function NewEvidencePage() {
                         />
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            Attachments (Images, Documents)
-                        </label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="file"
-                                multiple
-                                onChange={handleFileChange}
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground hover:file:cursor-pointer"
-                            />
-                            <UploadCloud className="h-5 w-5 text-muted-foreground" />
+                    {formData.type === "DIGITAL" && (
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                                File
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="file"
+                                    required
+                                    onChange={handleFileChange}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-muted-foreground file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground hover:file:cursor-pointer"
+                                />
+                                <UploadCloud className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Encrypted automatically before storage (F2/F3) - max 50MB.
+                            </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                            Supported: Images, PDF, Text. Max size: 5MB per file.
-                        </p>
-                    </div>
+                    )}
 
                     <div className="space-y-2">
                         <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                            Officer Notes (Optional)
+                            Notes (Optional)
                         </label>
                         <textarea
-                            name="officerNotes"
+                            name="notes"
                             rows={2}
                             placeholder="Any additional context..."
                             className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                            value={formData.officerNotes}
+                            value={formData.notes}
                             onChange={handleChange}
                         />
                     </div>
