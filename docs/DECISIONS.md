@@ -692,3 +692,25 @@ Initiated a custody transfer through the frontend and accepted it as FORENSIC_AN
 `/history` shows three real, distinct transaction ids (CREATED, TRANSFER_INITIATED, TRANSFER_ACCEPTED), each
 with the correct real actor id/role and timestamp. Both the register and custody-transfer wiring are now
 confirmed against the same standard as every other phase in this project - not just memory-ledger.
+
+## D-072
+
+**Frontend integration: Cases (list/create/view/update), verified live against real Fabric.** `cases/page.tsx`
+and `cases/[caseId]/page.tsx` rewritten against the real `CaseResponse`/`CreateCaseRequest`/`UpdateCaseRequest`
+shapes - the source repo's `{title, description}` create form was missing two backend-required fields
+(`caseNumber`, `leadOfficerId`, both mandatory), added as plain text inputs (no user-lookup endpoint for picking
+a lead officer, same limitation as custody transfer's recipient field). The edit form's status dropdown was
+removed entirely rather than kept and silently doing nothing: `UpdateCaseRequest` has no `status` field at all
+- closing/reopening a case (E4) was never built, so there is nothing to submit it to. Replaced the "Crime Boxes"
+section (Part B, no backend equivalent) with a real one: `CaseResponse.evidenceIds`, already returned by the
+same GET, linking straight to each evidence item's detail page (E3) - no extra endpoint needed. Case officer
+add/remove (also on this page in the source repo) is intentionally NOT wired here - it's a named Part C
+addition, done in its own pass once the rest of Part A is through.
+
+**Verified live** (as PROSECUTOR, one of the two roles `Permissions.MANAGE_CASES` allows, against the real
+Fabric-backed server from D-071): created a case with all four real fields through the actual form, confirmed
+it appeared correctly in the list and detail views: title-only edit saved and reread back from the API exactly
+as sent (no status field ever offered to lose). Opened an existing case with real evidence already linked
+(`FE-TEST-001`, populated across earlier checkpoints) and confirmed all 3 real evidence ids - including both a
+memory-ledger-era item and D-071's real-Fabric item - listed correctly and linked through to their own detail
+pages, proving E3's off-chain link table doesn't care which ledger backend registered the evidence.

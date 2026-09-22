@@ -1,68 +1,72 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import axios from "axios";
-import { useAuth } from "@/context/AuthContext";
-import { useParams, useRouter } from "next/navigation";
+import api from "@/lib/api";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { FolderOpen, ArrowLeft, Box, Loader2, Circle, ExternalLink, Pencil, Check, X } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, Check, X, FileText, Users } from "lucide-react";
 
+// Matches com.blockevidence.backend.dto.CaseResponse exactly. members/createdBy/leadOfficerId are
+// plain user ids (no user-lookup endpoint, A4 was never built). No "crimeBoxes" - that concept has no
+// backend equivalent (Part B). Adding/removing members is wired separately (Part C).
 interface CaseDetail {
   id: string;
+  caseNumber: string;
   title: string;
   description?: string;
-  status: string;
+  leadOfficerId: string;
+  status: "OPEN" | "CLOSED";
+  createdBy: string;
   createdAt: string;
-  updatedAt: string;
-  createdBy: { fullName: string; username: string };
-  crimeBoxes: { id: string; name: string; caseId: string; createdAt: string }[];
+  members: { userId: string; caseRole: string; addedBy: string; addedAt: string }[];
+  evidenceIds: string[];
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  open: "text-green-400 bg-green-400/10 border-green-400/20",
-  closed: "text-slate-400 bg-slate-400/10 border-slate-400/20",
-  suspended: "text-amber-400 bg-amber-400/10 border-amber-400/20",
+  OPEN: "text-green-400 bg-green-400/10 border-green-400/20",
+  CLOSED: "text-slate-400 bg-slate-400/10 border-slate-400/20",
 };
 
-const STATUSES = ["open", "suspended", "closed"];
-
 export default function CaseDetailPage() {
-  const { token } = useAuth();
   const params = useParams();
-  const router = useRouter();
   const userId = params.userId as string;
   const caseId = params.caseId as string;
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
   const [caseData, setCaseData] = useState<CaseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
-  const [editStatus, setEditStatus] = useState("open");
+  const [editDescription, setEditDescription] = useState("");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    if (!token) return;
-    axios.get(`${API}/api/v1/cases/${caseId}`, { headers: { Authorization: `Bearer ${token}` } })
+    api.get(`/api/cases/${caseId}`)
       .then(r => {
         setCaseData(r.data);
         setEditTitle(r.data.title);
-        setEditStatus(r.data.status);
+        setEditDescription(r.data.description || "");
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [token, caseId]);
+  }, [caseId]);
 
   const save = async () => {
     setSaving(true);
+    setSaveError("");
     try {
-      const r = await axios.put(`${API}/api/v1/cases/${caseId}`,
-        { title: editTitle, status: editStatus },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      setCaseData(prev => prev ? { ...prev, title: r.data.title, status: r.data.status } : null);
+      // UpdateCaseRequest has no "status" field - closing/reopening a case (E4) was never built, so
+      // that control is not offered here rather than shown and silently doing nothing.
+      const r = await api.put(`/api/cases/${caseId}`, {
+        title: editTitle,
+        description: editDescription || undefined,
+      });
+      setCaseData(prev => prev ? { ...prev, title: r.data.title, description: r.data.description } : null);
       setEditing(false);
-    } catch (e) { console.error(e); }
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      setSaveError(err.response?.data?.message || "Failed to save.");
+    }
     finally { setSaving(false); }
   };
 
@@ -85,24 +89,27 @@ export default function CaseDetailPage() {
                 value={editTitle}
                 onChange={e => setEditTitle(e.target.value)}
               />
-              <select
-                className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground"
-                value={editStatus}
-                onChange={e => setEditStatus(e.target.value)}
-              >
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <textarea
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
+                rows={2}
+                placeholder="Description"
+                value={editDescription}
+                onChange={e => setEditDescription(e.target.value)}
+              />
+              {saveError && <p className="text-sm text-destructive">{saveError}</p>}
             </div>
           ) : (
             <>
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold text-foreground">{caseData.title}</h1>
-                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${STATUS_COLORS[caseData.status] || STATUS_COLORS.open}`}>
+                <h1 className="text-2xl font-bold text-foreground">{caseData.caseNumber} - {caseData.title}</h1>
+                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${STATUS_COLORS[caseData.status] || STATUS_COLORS.OPEN}`}>
                   {caseData.status}
                 </span>
               </div>
               {caseData.description && <p className="text-muted-foreground text-sm mt-1">{caseData.description}</p>}
-              <p className="text-xs text-muted-foreground mt-2">Created by {caseData.createdBy.fullName} · {new Date(caseData.createdAt).toLocaleDateString()}</p>
+              <p className="text-xs text-muted-foreground mt-2 font-mono">
+                Lead officer: {caseData.leadOfficerId} · {new Date(caseData.createdAt).toLocaleDateString()}
+              </p>
             </>
           )}
         </div>
@@ -122,25 +129,38 @@ export default function CaseDetailPage() {
         </div>
       </div>
 
-      {/* Crime Boxes */}
+      {/* Team */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Box className="h-4 w-4 text-primary" /> Crime Boxes in this Case
+          <Users className="h-4 w-4 text-primary" /> Team ({caseData.members.length})
         </h3>
-        {caseData.crimeBoxes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No crime boxes linked yet. Use the Evidence page to link boxes.</p>
+        <div className="space-y-2">
+          {caseData.members.map(m => (
+            <div key={m.userId} className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
+              <span className="text-sm font-mono text-foreground">{m.userId}</span>
+              <span className="text-xs px-2 py-0.5 rounded-full border border-border text-muted-foreground">{m.caseRole}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Evidence linked to this case (E3) */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary" /> Evidence in this Case ({caseData.evidenceIds.length})
+        </h3>
+        {caseData.evidenceIds.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No evidence registered against this case yet.</p>
         ) : (
           <div className="space-y-2">
-            {caseData.crimeBoxes.map(box => (
-              <div key={box.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
-                <div>
-                  <p className="text-sm font-medium text-foreground">{box.name}</p>
-                  <p className="text-xs text-muted-foreground font-mono">{box.caseId}</p>
-                </div>
-                <Link href={`/dashboard/${userId}/evidence?caseId=${box.caseId}`} className="flex items-center gap-1 text-xs text-primary hover:underline">
-                  View Evidence <ExternalLink className="h-3 w-3" />
-                </Link>
-              </div>
+            {caseData.evidenceIds.map(id => (
+              <Link
+                key={id}
+                href={`/dashboard/${userId}/evidence/${id}`}
+                className="flex items-center justify-between p-3 rounded-lg border border-border bg-background hover:border-primary/30 transition-colors"
+              >
+                <span className="text-sm font-mono text-foreground">{id}</span>
+              </Link>
             ))}
           </div>
         )}
