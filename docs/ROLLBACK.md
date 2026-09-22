@@ -1,5 +1,44 @@
 # Rollback
 
+## A2 chaincode cutover (evidence v1.3), written 2026-09-22 BEFORE deploying it
+
+**This is the risky edit CLAUDE.md asks for a rollback note before, not after.** Deploying `evidence` v1.3 makes the
+chaincode REFUSE every write whose caller certificate has no `role`/`hf.EnrollmentID` attribute - which is every
+identity that existed before A2, including the backend's own service identity (`User1`). By design (A2-Q3, hard
+cutover), **there is no way to make v1.3 accept the old shared identity again**; the only way back is:
+
+1. **Revert target:** commit `202ba64` (tag `phase3-done`) if this session's E3/A2 work is reset with git, OR simply
+   keep pointing the backend at chaincode `evidence` v1.2 (unchanged, still committed on the channel) by NOT changing
+   `blockevidence.fabric.chaincode`/deploying nothing further - v1.2's `authorise()` never reads certificate
+   attributes at all, so it keeps accepting the shared identity exactly as before, with or without a wallet configured.
+2. **A chaincode version cannot be un-deployed.** If v1.3 is deployed and needs to be walked back for ANY reason
+   (an enrollment gap discovered late, a real user with no wallet entry), the fix is deploying v1.4 with the OLD
+   (Phase 2/3) `authorise()` restored - a new higher sequence, same as every other chaincode change in this project.
+3. **Pre-condition, checked and passing before v1.3 is deployed (this session):** all 6 enabled dev users are
+   enrolled (`scripts/fabric/enroll_users.sh`, verified against real PostgreSQL) and a live write signed with a real
+   wallet identity against the CURRENT (v1.2, non-enforcing) chaincode already succeeds and shows the correct
+   creator certificate via `qscc` (TEST_CHECKLIST Appendix P3-A2) - so v1.3's enforcement is not expected to break
+   any of the 6 dev users' writes.
+4. **What would immediately break if a 7th user existed with no wallet entry:** every write they attempt, with
+   `403 LEDGER_IDENTITY_MISSING` from the Java side before the chaincode is even asked (not a chaincode error) - not
+   currently possible since users exist only through `DevUserSeeder`, all 6 of whom are enrolled.
+5. **Files changed for this stage** (all additive/new, nothing in Phase 1/2 evidence code removed): chaincode
+   `authorise()` (`evidence.go`), `policy.go` (attribute name consts), fake test identity (`fake_ledger_test.go`),
+   `identity_test.go`; Java `ledger/IdentityStore`, `ledger/WalletIdentity`, `ledger/FileWalletIdentityStore`,
+   `ledger/WalletHealthIndicator`, `FabricProperties` (+2 fields), `LedgerErrorCode` (+1 value), `FabricLedgerService`
+   (writes now use a per-user `Gateway`, reads unchanged), `application.yml` (+2 properties), `pom.xml` (+1 explicit
+   dependency, already transitively present); `scripts/fabric/bootstrap_registrar.sh`, `scripts/fabric/enroll_users.sh`.
+
+**Side effects git does NOT undo, specific to this stage:**
+- **Fabric CA:** `be-registrar` is registered on `ca_org1` (least-privilege, per docs/A2_IDENTITY_DESIGN.md; cannot
+  be deleted, only revoked) and all 6 dev users are registered and enrolled with a `role`/`hf.EnrollmentID`
+  certificate (one-time secrets already consumed, `maxenrollments 1`). None of this is undone by reverting Java or
+  chaincode source.
+- **Wallet directory:** created outside the repo at the operator-chosen `FABRIC_WALLET_DIR`; deleting it makes every
+  write answer `LEDGER_IDENTITY_MISSING` again (safe - it is exactly the "not enrolled" state).
+- **Chaincode `evidence` v1.3** (once deployed below) is committed on the channel permanently, same as every
+  earlier version.
+
 ## Phase 3 (D1-D3, E1-E3, A2), written 2026-09-22 before the edit
 
 **Revert target:** git tag `phase2-done` (commit `7b814eb`, pushed to origin). Earlier: `phase2-spring-done` (`9e159b5`), `phase1-done` (`c1a4d4b`).

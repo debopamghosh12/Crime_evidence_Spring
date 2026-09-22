@@ -11,7 +11,9 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -55,8 +57,13 @@ import tools.jackson.databind.json.JsonMapper;
  * identity configuration or an unreachable network then surfaces as 503 LEDGER_UNAVAILABLE on the call, and
  * as UNKNOWN/DOWN in health, never as a startup failure.
  *
- * <p>Every call presents the same application identity. The end user's id and role are passed as chaincode
- * arguments that the chaincode checks but cannot authenticate (constraint C-08, closed by A2 in Phase 3).
+ * <p><b>A2 (design docs/A2_IDENTITY_DESIGN.md section 3.3):</b> reads and the health probe use the SERVICE
+ * identity (unchanged, {@code FABRIC_CERT_PATH}/{@code FABRIC_KEY_PATH}); every WRITE is signed with the
+ * ACTING USER's own identity, loaded from {@link IdentityStore}. A user with no wallet entry gets
+ * {@code 403 LEDGER_IDENTITY_MISSING} before any chaincode call is attempted - never a silent fallback to the
+ * service identity, which would reopen constraint C-08. One shared gRPC {@link ManagedChannel} (transport only)
+ * carries both the service {@link Gateway} and a small bounded cache of per-user {@link Gateway}s (each is
+ * lightweight: it wraps the shared channel with a signing identity, not a new connection).
  */
 @Service
 @Profile("!memory-ledger")
@@ -67,14 +74,27 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
     /** A well-formed id that cannot exist; asking for it proves the chaincode is answering (health check). */
     private static final String PROBE_ID = "EV-00000000-0000-4000-8000-000000000000";
 
-    private final FabricProperties properties;
-    private final JsonMapper json;
-    private ManagedChannel channel;
-    private Gateway gateway;
-    private Contract contract;
+    /** Bounded so a long-running backend cannot accumulate one Gateway per distinct user forever. Generous for a
+     *  project this size (FEATURE_LIST has 6 dev roles; real deployments would size this to active users). */
+    private static final int MAX_CACHED_USER_GATEWAYS = 64;
 
-    public FabricLedgerService(FabricProperties properties, JsonMapper jsonMapper) {
+    private final FabricProperties properties;
+    private final IdentityStore identityStore;
+    private final JsonMapper json;
+
+    private ManagedChannel channel;
+    private Gateway serviceGateway;
+    private Contract serviceContract;
+
+    /** LRU by access order; {@link #trimUserGateways()} closes and drops the eldest entry past the cap. */
+    private final Map<String, UserConnection> userGateways = new LinkedHashMap<>(16, 0.75f, true);
+
+    private record UserConnection(Gateway gateway, Contract contract) {
+    }
+
+    public FabricLedgerService(FabricProperties properties, IdentityStore identityStore, JsonMapper jsonMapper) {
         this.properties = properties;
+        this.identityStore = identityStore;
         // The chaincode adds fields the Java records do not model (docType); ignore them rather than fail.
         this.json = jsonMapper.rebuild().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     }
@@ -83,7 +103,7 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
 
     @Override
     public LedgerTxResult createEvidence(LedgerNewEvidence e, LedgerActor actor) {
-        return submit("CreateEvidence", e.evidenceId(), e.caseId(), e.evidenceType().name(), e.metadataCid(),
+        return submit(actor, "CreateEvidence", e.evidenceId(), e.caseId(), e.evidenceType().name(), e.metadataCid(),
                 e.metadataSha256(), nullToEmpty(e.fileCid()), nullToEmpty(e.fileSha256()),
                 e.fileSize() == null ? "" : e.fileSize().toString(), actor.userId(), actor.role().name());
     }
@@ -91,57 +111,57 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
     @Override
     public LedgerTxResult updateEvidence(String evidenceId, int expectedVersion, String newMetadataCid,
             String newMetadataSha256, String reason, LedgerActor actor) {
-        return submit("UpdateEvidence", evidenceId, Integer.toString(expectedVersion), newMetadataCid,
+        return submit(actor, "UpdateEvidence", evidenceId, Integer.toString(expectedVersion), newMetadataCid,
                 newMetadataSha256, reason, actor.userId(), actor.role().name());
     }
 
     @Override
     public LedgerTxResult updateStatus(String evidenceId, int expectedVersion, EvidenceStatus newStatus,
             String reason, LedgerActor actor) {
-        return submit("UpdateStatus", evidenceId, Integer.toString(expectedVersion), newStatus.name(), reason,
+        return submit(actor, "UpdateStatus", evidenceId, Integer.toString(expectedVersion), newStatus.name(), reason,
                 actor.userId(), actor.role().name());
     }
 
     @Override
     public LedgerTxResult requestDisposal(String evidenceId, int expectedVersion, String reason, LedgerActor actor) {
-        return submit("RequestDisposal", evidenceId, Integer.toString(expectedVersion), reason, actor.userId(),
+        return submit(actor, "RequestDisposal", evidenceId, Integer.toString(expectedVersion), reason, actor.userId(),
                 actor.role().name());
     }
 
     @Override
     public LedgerTxResult approveDisposal(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
-        return submit("ApproveDisposal", evidenceId, Integer.toString(expectedVersion), note, actor.userId(),
+        return submit(actor, "ApproveDisposal", evidenceId, Integer.toString(expectedVersion), note, actor.userId(),
                 actor.role().name());
     }
 
     @Override
     public LedgerTxResult rejectDisposal(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
-        return submit("RejectDisposal", evidenceId, Integer.toString(expectedVersion), note, actor.userId(),
+        return submit(actor, "RejectDisposal", evidenceId, Integer.toString(expectedVersion), note, actor.userId(),
                 actor.role().name());
     }
 
     @Override
     public LedgerTxResult initiateTransfer(String evidenceId, int expectedVersion, String toUserId, Role toRole,
             String reason, String notes, LedgerActor actor) {
-        return submit("InitiateTransfer", evidenceId, Integer.toString(expectedVersion), toUserId, toRole.name(), reason,
+        return submit(actor, "InitiateTransfer", evidenceId, Integer.toString(expectedVersion), toUserId, toRole.name(), reason,
                 nullToEmpty(notes), actor.userId(), actor.role().name());
     }
 
     @Override
     public LedgerTxResult acceptTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
-        return submit("AcceptTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+        return submit(actor, "AcceptTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
                 actor.role().name());
     }
 
     @Override
     public LedgerTxResult rejectTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
-        return submit("RejectTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+        return submit(actor, "RejectTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
                 actor.role().name());
     }
 
     @Override
     public LedgerTxResult cancelTransfer(String evidenceId, int expectedVersion, String note, LedgerActor actor) {
-        return submit("CancelTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
+        return submit(actor, "CancelTransfer", evidenceId, Integer.toString(expectedVersion), nullToEmpty(note), actor.userId(),
                 actor.role().name());
     }
 
@@ -203,9 +223,10 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
 
     // ---------------------------------------------------------------------------------- plumbing
 
-    private LedgerTxResult submit(String function, String... args) {
+    /** A2: signed with the ACTOR's own identity (LEDGER_IDENTITY_MISSING if they have none), not the service identity. */
+    private LedgerTxResult submit(LedgerActor actor, String function, String... args) {
         try {
-            byte[] result = contract().submitTransaction(function, args);
+            byte[] result = contractFor(actor).submitTransaction(function, args);
             WireTxResult tx = parse(result, WireTxResult.class);
             return new LedgerTxResult(tx.txId(), tx.timestamp());
         } catch (GatewayException | CommitException e) {
@@ -213,9 +234,10 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
         }
     }
 
+    /** Reads need no per-user identity (C-08 does not apply to them): always the service identity. */
     private byte[] evaluate(String function, String... args) {
         try {
-            return contract().evaluateTransaction(function, args);
+            return serviceContract().evaluateTransaction(function, args);
         } catch (GatewayException e) {
             throw translate(e);
         }
@@ -267,9 +289,9 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
     record WireTxResult(String txId, Instant timestamp, int version) {
     }
 
-    private synchronized Contract contract() {
-        if (contract != null) {
-            return contract;
+    private synchronized Contract serviceContract() {
+        if (serviceContract != null) {
+            return serviceContract;
         }
         if (!properties.isConfigured()) {
             throw new LedgerException(LedgerErrorCode.LEDGER_UNAVAILABLE,
@@ -278,28 +300,80 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
         try {
             X509Certificate certificate = readCertificate(resolveFile(properties.certPath()));
             PrivateKey privateKey = readPrivateKey(resolveFile(properties.keyPath()));
-            ManagedChannel newChannel = Grpc.newChannelBuilder(properties.peerEndpoint(),
-                            TlsChannelCredentials.newBuilder().trustManager(resolveFile(properties.tlsCertPath()).toFile()).build())
-                    .overrideAuthority(properties.peerHostAlias())
-                    .build();
             Gateway newGateway = Gateway.newInstance()
                     .identity(new X509Identity(properties.mspId(), certificate))
                     .signer(Signers.newPrivateKeySigner(privateKey))
-                    .connection(newChannel)
+                    .connection(channel())
                     .evaluateOptions(deadline(properties.evaluateTimeout()))
                     .endorseOptions(deadline(properties.endorseTimeout()))
                     .submitOptions(deadline(properties.submitTimeout()))
                     .commitStatusOptions(deadline(properties.commitTimeout()))
                     .connect();
-            this.channel = newChannel;
-            this.gateway = newGateway;
-            this.contract = newGateway.getNetwork(properties.channel()).getContract(properties.chaincode());
-            log.info("Connected to Fabric peer {} (channel {}, chaincode {}, msp {})", properties.peerEndpoint(),
-                    properties.channel(), properties.chaincode(), properties.mspId());
-            return contract;
+            this.serviceGateway = newGateway;
+            this.serviceContract = newGateway.getNetwork(properties.channel()).getContract(properties.chaincode());
+            log.info("Connected to Fabric peer {} (channel {}, chaincode {}, msp {}, service identity)",
+                    properties.peerEndpoint(), properties.channel(), properties.chaincode(), properties.mspId());
+            return serviceContract;
         } catch (IOException | CertificateException | InvalidKeyException | RuntimeException e) {
             // Deliberately not logging the paths' contents; the exception type and message suffice.
-            log.warn("Cannot connect to Fabric: {}", e.toString());
+            log.warn("Cannot connect to Fabric (service identity): {}", e.toString());
+            throw new LedgerException(LedgerErrorCode.LEDGER_UNAVAILABLE, "Cannot set up the Fabric connection");
+        }
+    }
+
+    /** A2: the acting user's own Gateway/Contract, from a small bounded cache, built on the SHARED channel. */
+    private synchronized Contract contractFor(LedgerActor actor) {
+        UserConnection existing = userGateways.get(actor.userId());
+        if (existing != null) {
+            return existing.contract();
+        }
+        WalletIdentity identity = identityStore.find(actor.userId()).orElseThrow(() -> new LedgerException(
+                LedgerErrorCode.LEDGER_IDENTITY_MISSING, "Your account has no ledger identity; ask an administrator to enroll it"));
+        try {
+            Gateway userGateway = Gateway.newInstance()
+                    .identity(new X509Identity(properties.mspId(), identity.certificate()))
+                    .signer(Signers.newPrivateKeySigner(identity.privateKey()))
+                    .connection(channel())
+                    .evaluateOptions(deadline(properties.evaluateTimeout()))
+                    .endorseOptions(deadline(properties.endorseTimeout()))
+                    .submitOptions(deadline(properties.submitTimeout()))
+                    .commitStatusOptions(deadline(properties.commitTimeout()))
+                    .connect();
+            Contract userContract = userGateway.getNetwork(properties.channel()).getContract(properties.chaincode());
+            userGateways.put(actor.userId(), new UserConnection(userGateway, userContract));
+            trimUserGateways();
+            return userContract;
+        } catch (RuntimeException e) {
+            log.warn("Cannot set up a per-user Fabric connection: {}", e.toString());
+            throw new LedgerException(LedgerErrorCode.LEDGER_UNAVAILABLE, "Cannot set up the Fabric connection for this user");
+        }
+    }
+
+    /** Closes and drops the least-recently-used entry once the cache is over its cap (called with the lock held). */
+    private void trimUserGateways() {
+        if (userGateways.size() <= MAX_CACHED_USER_GATEWAYS) {
+            return;
+        }
+        var it = userGateways.entrySet().iterator();
+        if (it.hasNext()) {
+            it.next().getValue().gateway().close();
+            it.remove();
+        }
+    }
+
+    /** Lazily creates the ONE shared gRPC transport; both the service Gateway and every per-user Gateway reuse it. */
+    private synchronized ManagedChannel channel() {
+        if (channel != null) {
+            return channel;
+        }
+        try {
+            channel = Grpc.newChannelBuilder(properties.peerEndpoint(),
+                            TlsChannelCredentials.newBuilder().trustManager(resolveFile(properties.tlsCertPath()).toFile()).build())
+                    .overrideAuthority(properties.peerHostAlias())
+                    .build();
+            return channel;
+        } catch (IOException e) {
+            log.warn("Cannot read the Fabric TLS trust material: {}", e.toString());
             throw new LedgerException(LedgerErrorCode.LEDGER_UNAVAILABLE, "Cannot set up the Fabric connection");
         }
     }
@@ -341,9 +415,11 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
 
     @Override
     public synchronized void destroy() {
-        if (gateway != null) {
-            gateway.close();
+        if (serviceGateway != null) {
+            serviceGateway.close();
         }
+        userGateways.values().forEach(c -> c.gateway().close());
+        userGateways.clear();
         if (channel != null) {
             channel.shutdownNow();
         }

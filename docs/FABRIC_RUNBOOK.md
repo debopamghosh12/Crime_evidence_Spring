@@ -80,3 +80,36 @@ checks). See `scripts/live/README.md`. Results and verbatim logs: `docs/TEST_CHE
 
 Test records are marked by case id: `FAB-DIRECT` (peer CLI), `FAB-WIRE` (fixtures), `FAB-LIVE-1..4` (API run). The channel went from
 block 48 to 93. To discard them, recreate the network (`network.sh down` then `up createChannel`), which also discards `basic`.
+
+## 8. A2: enroll every user BEFORE deploying the chaincode version that enforces certificate-based auth
+
+**This order is mandatory, not a suggestion.** The chaincode version that reads `role`/`hf.EnrollmentID` from the
+caller's certificate (`authorise()`, A2_IDENTITY_DESIGN.md section 3.2) refuses EVERY write from a certificate that
+lacks those attributes - which is every identity that exists before this step, including the backend's own service
+identity. Deploying that chaincode version before every user who needs to write is enrolled means their writes start
+failing with no code change on their part. **Do not run step 4 until step 3 passes for every enabled user.**
+
+1. **One-time, by the CA administrator:** `BE_REGISTRAR_SECRET=<a secret you choose> bash scripts/fabric/bootstrap_registrar.sh`
+   (from WSL). Registers the least-privilege registrar `be-registrar` on `ca-org1` (may register only `client` identities
+   carrying only the `role` attribute). Idempotent: safe to re-run, it does nothing if `be-registrar` already exists.
+   The secret lives only in the operator's shell; it is never written to the repo, `application.yml`, or a file.
+2. **Enroll every user:**
+   `BE_REGISTRAR_SECRET=<same secret> WALLET_DIR=<path outside the repo> [WALLET_PASSPHRASE=<optional>] bash scripts/fabric/enroll_users.sh`
+   (from WSL). Reads `(id, role)` for every `enabled` user from PostgreSQL, registers and enrolls each with attribute
+   `role=<ROLE>:ecert` and `hf.EnrollmentID`, and writes `<WALLET_DIR>/<id>/{cert.pem,key.pem}` (0600). Idempotent per
+   user (skips one who already has a wallet entry; `FORCE=1` re-enrolls everyone with a fresh certificate).
+3. **Verify every enabled user has a wallet entry** before going further:
+   ```bash
+   docker exec be-postgres psql -U blockevidence -d blockevidence -t -A -c "select count(*) from users where enabled=true"
+   ls "$WALLET_DIR" | wc -l     # must be >= the count above; each subdirectory has BOTH cert.pem and key.pem
+   ```
+   Point the running backend at the wallet (`FABRIC_WALLET_DIR`, and `FABRIC_WALLET_PASSPHRASE` if keys are encrypted)
+   and confirm a real write from each role succeeds and `/actuator/health`'s `wallet` component is `UP` - this can be
+   done safely against the CURRENT (non-enforcing) chaincode version first, since a correctly enrolled identity's
+   writes succeed on either version. TEST_CHECKLIST Appendix P3-A2 is exactly this check, run 2026-09-22.
+4. **Only once step 3 passes for every enabled user**, deploy the chaincode version whose `authorise()` enforces
+   certificate attributes (`VER=1.3 SEQ=4 bash chaincode/scripts/deploy_cc.sh` for this project's A2 rollout). From
+   this point on, an identity with no `role` certificate attribute cannot write; see `docs/ROLLBACK.md` for what
+   this cannot be undone by (a chaincode version, once deployed, cannot be removed).
+5. **A new user added later** (once A4/admin user management exists, out of scope for this project) must be enrolled
+   with step 2 BEFORE they attempt a write, or they get `403 LEDGER_IDENTITY_MISSING`.

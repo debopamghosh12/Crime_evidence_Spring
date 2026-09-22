@@ -24,8 +24,9 @@ const (
 )
 
 // InitiateTransfer starts a handover to toUserID. Only the CURRENT CUSTODIAN can initiate (this is the custody rule
-// itself, not just a role check). toRole is the receiver's role as supplied by the backend; it must be one that can hold
-// evidence, and the receiver must later accept with that same role (C-08: until A2 both are argument-supplied).
+// itself, not just a role check). toRole is the receiver's role as the backend looked it up (from PostgreSQL, off-chain);
+// it must be one that can hold evidence, and the receiver must later accept with that same role, authenticated by their
+// OWN certificate (authorise(), A2) - toRole is not itself certificate-backed, since the receiver has not acted yet.
 func (c *EvidenceContract) InitiateTransfer(ctx contractapi.TransactionContextInterface, evidenceID, expectedVersion,
 	toUserID, toRole, reason, notes, actorID, actorRole string) (*TxResult, error) {
 

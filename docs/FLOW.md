@@ -216,3 +216,14 @@ Step 1 of section 7 (register) now starts with `EvidenceService.register` resolv
 nothing is pinned. After `ledger.createEvidence` succeeds (unchanged from section 7), `CaseEvidenceLinkRepository.save`
 writes the off-chain link row. `GET /api/cases/{id}/evidence` -> `CaseService.evidence` -> `CaseEvidenceLinkRepository` for
 the linked ids -> `EvidenceService.get` for each (the same read path as `findByCid`, one ledger call per item).
+
+## 18. Every write, updated for A2
+
+Every write path in sections 7, 10, 11, 13, 14 (register, update, status, disposal, custody transfer) is unchanged
+UP TO the point where it calls `LedgerService`. From there: `FabricLedgerService.submit(actor, function, args...)` ->
+`contractFor(actor)` -> `IdentityStore.find(actor.userId())`. No wallet entry -> `403 LEDGER_IDENTITY_MISSING`,
+nothing sent to the chaincode. A wallet entry found -> a per-user `Gateway` (cached) signs and submits the
+transaction -> the chaincode's `authorise()` reads the certificate's `role`/`hf.EnrollmentID`, checks it equals the
+`actorId`/`actorRole` arguments Spring still sends (unchanged), and only then checks the role-permission table
+(unchanged). Every READ (`GetEvidence`, `GetHistory`, `FindByCid`, `FindPendingTransfers`, the health probe) is
+completely unaffected: they still use the single SERVICE identity, as before A2.

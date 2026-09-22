@@ -147,3 +147,40 @@ version for this. `EvidenceService.register` now requires the caseId to name an 
 before any IPFS work; this is enforced unconditionally, not behind a flag, because the feature's own definition ("evidence
 belongs to a real case entity") and the owner's phrasing both point at enforcement rather than an optional check. All three
 live scripts were updated to create their cases first, since this is a real, visible change to how `register` behaves.
+
+## D-047 — A2: certificate-authoritative authorise(), argument kept for compatibility, hard cutover (2026-09-22)
+Approved as designed (A2-Q1..Q8): `authorise()` now reads `role`/`hf.EnrollmentID` from the caller's certificate and
+requires the `actorId`/`actorRole` ARGUMENTS to equal it - every chaincode function signature, the Java `LedgerService`
+interface and every Phase 2/3 controller/service are unchanged. No fallback for a certificate with no `role` attribute
+(strict): reads still work (they never call `authorise`), writes are refused. This is a hard cutover, so enrollment of
+every user had to happen BEFORE deploying the enforcing chaincode version (`docs/FABRIC_RUNBOOK.md` section 8), verified
+live before the deploy (a per-user write against the still-non-enforcing v1.2 succeeded and showed the right creator
+certificate) and again after (`evidence` v1.3 seq 4). Rejected: a soft cutover accepting either the argument alone or a
+certificate (keeps the C-08 hole open, since a bug could still forge the argument for an unenrolled or wrong identity).
+
+## D-048 — Java side: per-user Gateway for writes, service identity kept for reads, one shared gRPC channel (2026-09-22)
+`FabricLedgerService` now has two families of connection: the existing SERVICE identity (`FABRIC_CERT_PATH`/`FABRIC_KEY_PATH`,
+unchanged) for every read and the health probe, and a small bounded LRU cache (64 entries) of per-user `Gateway`/`Contract`
+pairs for writes, built from `IdentityStore.find(actor.userId())`. All of them share ONE `ManagedChannel` (transport only;
+a `Gateway` is a lightweight wrapper with its own signing identity over that channel, not a new TCP/TLS connection), so
+per-user signing does not multiply network connections. A user with no wallet entry gets `403 LEDGER_IDENTITY_MISSING`
+(new `LedgerErrorCode`) before any chaincode call - never a silent fallback to the service identity, which would reopen
+C-08. Rejected: a Gateway per REQUEST (works, but discards a cheap reuse opportunity for a user who writes repeatedly);
+an unbounded cache (a long-running backend with many enrolled users would accumulate Gateways forever).
+
+## D-049 — Wallet: files on disk, one directory per user, optional PKCS#8 encryption via BouncyCastle (2026-09-22)
+`IdentityStore`/`FileWalletIdentityStore` (Option 1 in the design, an operator script, approved A2-Q2): `<FABRIC_WALLET_DIR>/<userId>/{cert.pem,key.pem}`,
+maintained by `scripts/fabric/enroll_users.sh`, never written by the running app. An unencrypted key needs no
+passphrase; an "ENCRYPTED PRIVATE KEY" (PKCS#8) key is decrypted with `FABRIC_WALLET_PASSPHRASE` using `bcpkix-jdk18on`
+(already transitively present via `fabric-gateway`; declared explicitly per C-04/A2-Q8). Found live: decrypting a
+PBES2-encrypted key needs the BouncyCastle JCE **provider** registered (`Security.addProvider`), not just its classes on
+the classpath - the unit test's own static initialiser masked this until the real application was run
+(`docs/bugs/wallet-key-decrypt-needs-bc-provider.md`). A `wallet` health indicator warns (DOWN) when any enrolled
+identity is within 30 days of its certificate's expiry.
+
+## D-050 — Registrar: least-privilege `be-registrar`, a one-time operator script, never held by the app (2026-09-22)
+`scripts/fabric/bootstrap_registrar.sh` registers `be-registrar` (may register only `client` identities carrying only the
+`role` attribute, per the spike's proven escalation refusals). Its secret lives only in the operator's shell
+(`BE_REGISTRAR_SECRET`), passed to `scripts/fabric/enroll_users.sh` when enrolling users; the running backend never sees
+either secret. Reused the exact registrar shape already validated in the A2 spike (TEST_CHECKLIST Appendix P3-A) rather
+than re-deriving it.

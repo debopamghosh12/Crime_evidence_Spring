@@ -32,6 +32,10 @@
 		<!-- fabric-gateway 1.12.1 is built against gRPC 1.83.1: keep the transport on the same version. -->
 		<fabric-gateway.version>1.12.1</fabric-gateway.version>
 		<grpc.version>1.83.1</grpc.version>
+		<!-- Already on the classpath transitively via fabric-gateway at this exact version (dependency:tree);
+		     declared explicitly (A2, DECISIONS D-047, approved A2-Q8/C-04) because FileWalletIdentityStore uses
+		     it directly to decrypt PKCS#8 wallet keys, so an upgrade elsewhere in the tree must not silently move it. -->
+		<bcpkix.version>1.85</bcpkix.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -90,6 +94,11 @@
 			<artifactId>grpc-netty-shaded</artifactId>
 			<version>${grpc.version}</version>
 			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.bouncycastle</groupId>
+			<artifactId>bcpkix-jdk18on</artifactId>
+			<version>${bcpkix.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.postgresql</groupId>

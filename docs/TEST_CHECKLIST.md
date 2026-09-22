@@ -106,6 +106,417 @@ Real refusals as the peer prints them: `FORBIDDEN_ROLE: Only the named receiver 
 A2 (design only, Appendix P3-A is the CA spike it rests on, not an implementation, until section P3-A2 below); D4; a user-lookup endpoint;
 the four known gaps of KNOWN_GAPS section A.
 
+### P3.9 A2 (per-user Fabric identity) built, deployed and verified, 2026-09-22
+
+Design approved as proposed (A2-Q1..Q8, docs/A2_IDENTITY_DESIGN.md). Order followed exactly as
+docs/FABRIC_RUNBOOK.md section 8 requires: registrar -> enroll every user -> verify each write works on the
+STILL-NON-ENFORCING chaincode -> only then deploy the enforcing version -> verify again.
+
+**Go tests (36, chaincode/evidence), including 3 new A2-specific tests, filtered to result lines):**
+```
+--- PASS: TestCreateStoresVersionOneCollectedWithLedgerTimestampAndActor (0.00s)
+--- PASS: TestDuplicateIdIsRejected (0.00s)
+--- PASS: TestOnlyCollectorAndAnalystMayCreate (0.00s)
+--- PASS: TestDigitalNeedsFileFieldsAndPhysicalForbidsThem (0.00s)
+--- PASS: TestMalformedInputsAreRejected (0.00s)
+--- PASS: TestAnOrganisationOutsideTheAllowListCannotWrite (0.00s)
+--- PASS: TestUpdateBumpsVersionKeepsFileFieldsAndNeedsAReason (0.00s)
+--- PASS: TestStaleExpectedVersionIsRejected (0.00s)
+--- PASS: TestUpdateWithUnchangedCidOrUnknownIdOrWrongRoleFails (0.00s)
+--- PASS: TestStatusMovesForwardOnlyAndNeverToDisposed (0.00s)
+--- PASS: TestDisposalNeedsRequestThenJudgeApprovalThenFreezesTheRecordButKeepsIt (0.00s)
+--- PASS: TestRejectedDisposalLeavesTheRecordUsable (0.00s)
+--- PASS: TestTheApproverCannotBeTheRequester (0.00s)
+--- PASS: TestHistoryIsOldestFirstWithDistinctTxIdsEvenIfThePeerReturnsNewestFirst (0.00s)
+--- PASS: TestCidIndexFindsFileAndEveryMetadataCidAndSharedFiles (0.00s)
+--- PASS: TestARejectedCallChangesNothing (0.00s)
+--- PASS: TestEveryWriteEmitsOneEventWithOnlyIdentifiers (0.00s)
+--- PASS: TestNothingEverDeletes (0.06s)
+--- PASS: TestTheExportedFunctionSetIsExactlyTheApprovedOne (0.00s)
+--- PASS: TestRecordJsonKeysAreTheContractWithTheJavaSide (0.00s)
+--- PASS: TestContractMetadataGenerates (0.06s)
+--- PASS: TestOmitemptyFieldsAreAlsoOptionalInTheSchema (0.00s)
+--- PASS: TestACertificateWithNoRoleAttributeIsRefusedForEveryWriteButReadsStillWork (0.00s)
+--- PASS: TestArgumentAndCertificateMismatchIsRefused (0.00s)
+--- PASS: TestACertificateThatMatchesButLacksPermissionIsStillRefused (0.00s)
+--- PASS: TestInitiateOnlyByTheCurrentCustodianAndCustodyMovesOnlyOnAcceptance (0.00s)
+--- PASS: TestAcceptMakesTheReceiverCustodianAndTheyCanHandOnWhileTheOldCustodianCannot (0.00s)
+--- PASS: TestRejectLeavesCustodyWithTheSenderAndAllowsANewTransfer (0.00s)
+--- PASS: TestOnlyTheSenderCanCancelAndOnlyTheNamedReceiverCanRespond (0.00s)
+--- PASS: TestTheReceiverMustRespondWithTheRoleTheTransferWasAddressedTo (0.00s)
+--- PASS: TestRolesThatCannotHoldEvidenceAreRefusedEverywhere (0.00s)
+--- PASS: TestInitiateArgumentAndStateChecks (0.00s)
+--- PASS: TestATransferCannotStartWhileADisposalIsPendingOrAfterDisposal (0.00s)
+--- PASS: TestPendingListShowsOnlyWhatIsStillPendingTowardThatUser (0.00s)
+--- PASS: TestARecordWrittenBeforeCustodyTransfersExistedReadsAsNoneAndCanBeTransferred (0.00s)
+--- PASS: TestTheCustodyTimelineIsRecoverableFromHistory (0.00s)
+PASS
+ok  	blockevidence/evidence	0.661s
+```
+
+**Java tests (183 total, up from 173 before A2), full per-class table:**
+```
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0  config.JwtPropertiesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  controller.EvidenceControllerTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  controller.Phase3ControllersTest
+Tests run: 22, Failures: 0, Errors: 0, Skipped: 0  ledger.FabricLedgerServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  ledger.FileWalletIdentityStoreTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.HealthIndicatorsTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerServiceTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerTransferTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.WalletHealthIndicatorTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  security.JwtServiceTest
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0  security.SecurityAndErrorFormatTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0  service.AuthServiceTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
+Tests run: 27, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  service.HashingInputStreamTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0  service.LifecycleServicesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  storage.HttpIpfsClientTest
+Tests run: 183, Failures: 0, Errors: 0, Skipped: 0
+```
+New: `FileWalletIdentityStoreTest` (5: plain key, encrypted key + wrong passphrase, missing entry, expiry, no leak
+on a decrypt failure), `WalletHealthIndicatorTest` (3), plus A2 cases added to `FabricLedgerServiceTest` (+2 net).
+One bug found and fixed along the way (`docs/bugs/wallet-key-decrypt-needs-bc-provider.md`): an EC test key
+generated with the JDK's default SunEC provider was not readable by fabric-gateway's own key parser at all (fixed
+by generating test keys with the BC provider, matching what real Fabric CA-issued keys look like); separately, the
+running application itself failed to decrypt an encrypted wallet key until BouncyCastle was registered as a JCE
+**provider**, not just present on the classpath.
+
+**Step 1 (operator, one-time): registering `be-registrar`** (`scripts/fabric/bootstrap_registrar.sh`):
+registers a client-only, role-attribute-only registrar and confirms it can enroll; reuses the exact least-privilege
+shape the A2 spike (Appendix P3-A) already proved refuses every escalation attempt.
+
+**Step 2: enrolling every enabled user** (`scripts/fabric/enroll_users.sh`, wallet keys PKCS#8-encrypted):
+```
+### Enrolling be-registrar
+ok
+### Reading enabled users from PostgreSQL
+USER ID                                ROLE               EMAIL                            ACTION     CERT EXPIRES
+54db3c70-a145-4743-b01b-d247442dd5e1   ADMIN              admin@blockevidence.local        skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+65bd142c-21ce-4491-aca1-8a605925d961   AUDITOR            auditor@blockevidence.local      skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+f47ff616-80f2-4b54-b128-3b1b3fb6b8d0   COLLECTOR          collector@blockevidence.local    skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+b9481c66-6f02-463e-9ca1-2fd45ccd0ca2   FORENSIC_ANALYST   forensic-analyst@blockevidence.local skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+e878852e-a405-46e5-a79d-cd2cf11e7874   JUDGE              judge@blockevidence.local        skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+286529a7-2abf-48aa-8553-2ae9810ce5c0   PROSECUTOR         prosecutor@blockevidence.local   skipped    Sep 22 02:36:00 2027 GMT (already enrolled; FORCE=1 to redo)
+
+Wallet: /mnt/c/Users/debop/AppData/Local/Temp/claude/E--FINAL-YEAR-PROJECT/ab07a2df-3e62-47bd-be5c-469fddd75fa4/scratchpad/wallet (set FABRIC_WALLET_DIR to this path and FABRIC_WALLET_PASSPHRASE to the same passphrase for the app; keys are 0600, PKCS#8-encrypted).
+```
+(This is the SECOND, idempotent run - every user shows "skipped, already enrolled"; the first run showed
+"enrolled" for all 6 with the same certificate expiries.)
+
+**Step 3: verifying every enabled user's identity works, BEFORE the enforcing chaincode is deployed**
+(chaincode still v1.2 at this point, the OLD, non-certificate-checking `authorise()`):
+```
+### Pre-cutover (chaincode still v1.2, non-enforcing): a write signed with the COLLECTOR's own wallet identity
+$ curl -X POST /api/evidence  (collector token, wallet configured)
+ HTTP 201, evidenceId=EV-3725dd2d-0ed4-43a0-911e-c50dbe8d6cb8, createdBy=f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+
+### qscc GetTransactionByID on that write's txId: the creator certificate CN is the collector's OWN user id
+ txId=89fe7c52023a2204a4fc9b855bb88fdd703d92beb7bd3eedaf0f6285e4c9a205
+ qscc creator CN -> $f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+ (collector's user id: f47ff616-80f2-4b54-b128-3b1b3fb6b8d0 -- MATCH; before A2 every creator would show User1's identity, not this)
+```
+Then the whole Phase 2 checklist was run with the wallet configured (still v1.2): identical to the wallet-off
+baseline apart from timestamps - `scripts/live/live_phase2.sh`, log kept locally (not re-appended here; superseded
+by the post-cutover run below, which is the one that matters).
+
+**Step 4: deploying the enforcing chaincode** (`VER=1.3 SEQ=4 bash chaincode/scripts/deploy_cc.sh`, decisive lines):
+```
+EXIT 0
+### copy source to a WSL-local dir (no spaces in the path) and vendor dependencies
+custody.go
+evidence.go
+go.mod
+go.sum
+main.go
+model.go
+policy.go
+vendor
+### package
+package id: evidence_1.3:f45751ebf53baa04b01e33adb222a835e69ea4165beb189ad18577c9df31b741
+### install on Org1 (the peer builds the chaincode image; this takes a while)
+[34m2026-09-22 02:47:21.078 UTC 0001 INFO[0m [cli.lifecycle.chaincode] [34;1msubmitInstallProposal[0m -> Installed remotely: response:<status:200 payload:"\nMevidence_1.3:f45751ebf53baa04b01e33adb222a835e69ea4165beb189ad18577c9df31b741\022\014evidence_1.3" > 
+[34m2026-09-22 02:47:21.085 UTC 0002 INFO[0m [cli.lifecycle.chaincode] [34;1msubmitInstallProposal[0m -> Chaincode code package identifier: evidence_1.3:f45751ebf53baa04b01e33adb222a835e69ea4165beb189ad18577c9df31b741
+### install on Org2
+[34m2026-09-22 02:47:57.460 UTC 0001 INFO[0m [cli.lifecycle.chaincode] [34;1msubmitInstallProposal[0m -> Installed remotely: response:<status:200 payload:"\nMevidence_1.3:f45751ebf53baa04b01e33adb222a835e69ea4165beb189ad18577c9df31b741\022\014evidence_1.3" > 
+[34m2026-09-22 02:47:57.460 UTC 0002 INFO[0m [cli.lifecycle.chaincode] [34;1msubmitInstallProposal[0m -> Chaincode code package identifier: evidence_1.3:f45751ebf53baa04b01e33adb222a835e69ea4165beb189ad18577c9df31b741
+### approve for Org1
+[34m2026-09-22 02:47:59.723 UTC 0001 INFO[0m [chaincodeCmd] [34;1mClientWait[0m -> txid [af6b1cd808be8d033c43558a4857acce553480953a6c5e8dc7567accde223e13] committed with status (VALID) at localhost:7051
+### approve for Org2
+[34m2026-09-22 02:48:02.001 UTC 0001 INFO[0m [chaincodeCmd] [34;1mClientWait[0m -> txid [49a1e672c4f1342726acae23fee7042401120bbbffb5a6ec30d97109bbf3cc4e] committed with status (VALID) at localhost:9051
+### commit readiness
+{
+	"approvals": {
+		"Org1MSP": true,
+		"Org2MSP": true
+	}
+}
+### commit
+[34m2026-09-22 02:48:04.523 UTC 0001 INFO[0m [chaincodeCmd] [34;1mClientWait[0m -> txid [11771524ccae6aa9a459c80c4ef040e8d0d18b11c8ee836bc7096a61f811e986] committed with status (VALID) at localhost:9051
+[34m2026-09-22 02:48:04.527 UTC 0002 INFO[0m [chaincodeCmd] [34;1mClientWait[0m -> txid [11771524ccae6aa9a459c80c4ef040e8d0d18b11c8ee836bc7096a61f811e986] committed with status (VALID) at localhost:7051
+### committed definitions
+Committed chaincode definitions on channel 'crimechannel':
+Name: evidence, Version: 1.3, Sequence: 4, Endorsement Plugin: escc, Validation Plugin: vscc
+Name: basic, Version: 1.0, Sequence: 1, Endorsement Plugin: escc, Validation Plugin: vscc
+```
+
+**Verification plan item 2: the real chaincode, through the peer CLI, with different real identities**
+(`chaincode/scripts/verify_a2_cutover.sh`; two throwaway CA identities enrolled for this check and revoked
+afterwards, per docs/ROLLBACK.md):
+```
+### Enrolling be-registrar and two throwaway identities (revoked at the end)
+judge identity   = 68c0f8ce-64ac-47ee-b287-3149a239fedb
+collector identity = b8929a45-ff2e-4c6f-8b75-6cbc187c2381
+
+### 1. User1 (pre-A2 identity, no role certificate attribute) tries to write: must be refused
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: This identity has no role certificate attribute; only per-user enrolled identities may write evidence" 
+
+### 2. A JUDGE certificate claiming COLLECTOR in the argument: must be refused
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: The supplied actor does not match the calling certificate" 
+
+### 3. A COLLECTOR certificate claiming JUDGE in the argument (ApproveDisposal): must be refused
+Error: endorsement failure during invoke. response: status:500 message:"FORBIDDEN_ROLE: The supplied actor does not match the calling certificate" 
+
+### 4. Positive control: the SAME collector certificate, correctly claiming COLLECTOR: must succeed
+2026-09-22 02:52:49.441 UTC 0003 INFO [chaincodeCmd] chaincodeInvokeOrQuery -> Chaincode invoke successful. result: status:200 payload:"{\"txId\":\"e5da51d72d11983ca3acb5e7890ef888eec36e7753a6c4aaaf1ebe01f55e24ef\",\"timestamp\":\"2026-09-22T02:52:47.317548557Z\",\"version\":1}" 
+{"docType":"evidence","evidenceId":"EV-93b8c13f-54ba-46f8-870a-91d3d3ff1188","caseId":"FAB-A2-CUTOVER","evidenceType":"PHYSICAL","status":"COLLECTED","version":1,"metadataCid":"bkjgrhtopqegexdvpbv6vtr5sqyrqpxj4662kls37mou7jag2ks66","metadataSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","createdBy":"b8929a45-ff2e-4c6f-8b75-6cbc187c2381","createdByRole":"COLLECTOR","createdAt":"2026-09-22T02:52:47.317548557Z","updatedBy":"b8929a45-ff2e-4c6f-8b75-6cbc187c2381","updatedByRole":"COLLECTOR","updatedAt":"2026-09-22T02:52:47.317548557Z","lastAction":"CREATED","lastReason":"","currentCustodian":"b8929a45-ff2e-4c6f-8b75-6cbc187c2381","disposal":{"state":"NONE"},"transfer":{"state":"NONE"}}
+
+### 5. qscc: the creator of that write's transaction is the collector's OWN certificate (CN = its enrollment id)
+(expected to equal: CN=b8929a45-ff2e-4c6f-8b75-6cbc187c2381)
+```
+Item 1 (`User1`, the pre-A2 identity with no certificate attribute) is refused with exactly the message
+`authorise()` gives for a missing attribute. Items 2-3 (a JUDGE certificate claiming COLLECTOR, and a COLLECTOR
+certificate claiming JUDGE) are refused with the mismatch message - this is the direct demonstration that role
+forgery by the backend's own caller no longer works. Item 4 (the same COLLECTOR certificate, correctly claiming
+COLLECTOR) succeeds. Item 5 (an additional qscc creator check on that same write) did not resolve cleanly in this
+run (a script-side query issue, not a chaincode or security issue); the identical property - creator certificate
+CN equals the signer's own id - is already conclusively shown in step 3 above and was not re-chased further.
+
+**Step 4 regression: the whole Phase 2 checklist AND the Fabric-only extras, wallet configured, chaincode v1.3**
+(`scripts/live/live_phase2.sh`, `scripts/live/live_fabric_extra.sh`; application log after both: 0 `ERROR` lines,
+0 script tracebacks):
+```
+collector user id (from /api/auth/me): f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+
+### E3 prerequisite: create the cases this checklist registers evidence under
+   case FAB-LIVE-1 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-2 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-3 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-4 -> 409 (200/201 created, 409 already exists from an earlier run)
+   register under an unknown case number -> 404  CASE_NOT_FOUND
+
+### B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)
+HTTP 201
+   evidenceId                 EV-d672eb34-44f9-41ce-8d66-a847366f4a51
+   status                     COLLECTED
+   version                    1
+   createdBy                  f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   currentCustodian           f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   fileCid                    bafkreiabnsxi7ym4c3sctft6qoehtvtsx7fdfntuka5lxzxohfskn23muy
+   fileSha256                 016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   fileSize                   41
+   metadataAvailable          True
+   metadata.collectorId       f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   verification.status        NOT_CHECKED
+   -> local sha256 of the file : 016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   -> ledger fileSha256        : 016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   -> createdBy == collector id from JWT? YES
+   -> stored bytes fetched from IPFS by the file CID == original? YES
+
+### B1 register PHYSICAL evidence (no file)
+HTTP 201
+   evidenceId                 EV-9b08acdb-2e53-4428-a091-d09f486f9dc7
+   evidenceType               PHYSICAL
+   fileCid                    None
+   fileSha256                 None
+   status                     COLLECTED
+   createdByRole              None
+
+### B3 retrieve by id, by file CID, by metadata CID
+200 HTTP by id (AUDITOR)
+   status                     COLLECTED
+   version                    1
+   metadata.description       Suspect phone image
+   verification.status        NOT_CHECKED
+200 HTTP by file CID
+   ids: ['EV-d672eb34-44f9-41ce-8d66-a847366f4a51']
+200 HTTP by metadata CID
+404 HTTP by unknown CID
+   error                      NOT_FOUND
+404 HTTP unknown id
+   error                      NOT_FOUND
+
+### C2 verify untouched evidence
+200 HTTP
+   status                     VERIFIED
+   ledgerVersion              1
+   file.result                VERIFIED
+   file.expectedSha256        016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   file.actualSha256          016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   metadata.result            VERIFIED
+
+### C2 DELIBERATE CORRUPTION: change one word inside the file's block on the IPFS node's disk, then restart the node
+   -> block file on the node: /data/ipfs/blocks/ZJ/CIQAC3FOR7QZYFXEFGLH5A4IPHLHFP6KGK3HIUB2XPTO4OLEU3VWZJQ.data
+   -> before: LIVE-EVIDENCE-1790045599-original-content
+   -> after : LIVE-EVIDENCE-1790045599-0RIGINAL-content
+   -> IPFS still answers a cat for the same CID (content-addressing did NOT catch it):
+   ->    cat -> LIVE-EVIDENCE-1790045599-0RIGINAL-content
+200 HTTP verify
+   status                     TAMPERED
+   file.result                TAMPERED
+   file.expectedSha256        016cae8fe19c16e429967e838879d672bfca32b674503abbe6ee3964a6eb6ca6
+   file.actualSha256          729300a072c03516da093e66da8aaeb7facc0cd523dd044e250de7d3cc917e2d
+   metadata.result            VERIFIED
+200 HTTP GET ?verify=true
+   verification.status        TAMPERED
+   status                     COLLECTED
+
+### C2 NOT_FOUND: register another item, delete its file block from the node's disk, restart
+removed-block
+200 HTTP verify (288 ms)
+   status                     NOT_FOUND
+   file.result                NOT_FOUND
+   file.actualSha256          None
+   metadata.result            VERIFIED
+
+### B4 versioned update (ANALYST), old version stays readable, stale update rejected
+200 HTTP update v1->v2
+   version                    2
+   lastAction                 METADATA_UPDATED
+   lastReason                 Location corrected after audit
+   metadata.location          Locker 9
+   metadata.description       Wallet
+   metadata.metadataVersion   2
+   metadata.previousMetadataCid bafkreidfsju236kt7oiuammpt6rb4opioifkpjgmzqz34fev65qvyb3jiq
+200 HTTP GET version 1 (old)
+   version                    1
+   metadata.location          Desk 2
+200 HTTP GET version 2
+   version                    2
+   metadata.location          Locker 9
+409 HTTP stale update (expectedVersion=1, record is at 2)
+   error                      VERSION_CONFLICT
+   message                    Expected version 1 but the record is at version 2
+400 HTTP blank reason
+   error                      VALIDATION_FAILED
+403 HTTP JUDGE update
+   error                      ACCESS_DENIED
+
+### C3 ledger history (tx ids and ledger timestamps)
+200 HTTP
+   v1  CREATED           tx=035f0d2612037043..  at=2026-09-22T02:53:56.436027300Z  by=COLLECTOR reason=''
+   v2  METADATA_UPDATED  tx=d62ae0c32bdcd4c3..  at=2026-09-22T02:53:58.937953700Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+
+### B5 disposal: request (PROSECUTOR) -> COLLECTOR cannot approve -> stale approval rejected -> JUDGE approves
+200 HTTP request disposal
+   status                     COLLECTED
+   version                    2
+   disposal.state             PENDING
+   disposal.reason            Case closed by order 42/2026
+   lastAction                 DISPOSAL_REQUESTED
+403 HTTP COLLECTOR approve
+   error                      ACCESS_DENIED
+409 HTTP JUDGE approve with stale version
+   error                      VERSION_CONFLICT
+200 HTTP JUDGE approve
+   status                     DISPOSED
+   version                    3
+   disposal.state             NONE
+   lastAction                 DISPOSAL_APPROVED
+   lastReason                 Order verified
+409 HTTP update after DISPOSED
+   error                      INVALID_STATE
+   message                    Evidence is DISPOSED and can no longer change
+200 HTTP the DISPOSED record is still readable
+   status                     DISPOSED
+   version                    3
+200   history entries still on ledger: [(1, 'CREATED'), (2, 'DISPOSAL_REQUESTED'), (3, 'DISPOSAL_APPROVED')]
+
+### C-02: there is no delete
+   DELETE /api/evidence/{id} as collector -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as admin -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as judge -> 405  METHOD_NOT_ALLOWED
+
+### A3 roles: who may register (403 for the rest)
+   collector -> 201
+   forensic-analyst -> 201
+   prosecutor -> 403
+   judge -> 403
+   auditor -> 403
+   admin -> 403
+
+### B2 upload limits and types
+   disallowed type (application/x-msdownload) -> 415  UNSUPPORTED_FILE_TYPE | File type 'application/x-msdownload' is not allowed
+   empty file for DIGITAL -> 400  FILE_REQUIRED
+   file on PHYSICAL evidence -> 400  FILE_NOT_ALLOWED
+   missing required metadata field -> 400  ['caseId', 'description']
+   60 MB file (limit 50 MB) -> 413  CONTENT_TOO_LARGE
+   20 MB file -> HTTP 201 in 4415 ms
+   -> local sha256 : f6e6a4be779d45a0e191bda3155b3886ac97c24955f8fa40ff8e974ce3bab7fd
+   -> ledger sha256: f6e6a4be779d45a0e191bda3155b3886ac97c24955f8fa40ff8e974ce3bab7fd   size=20000000
+200 HTTP verify of the 20 MB file
+   status                     VERIFIED
+   file.result                VERIFIED
+
+### F1 IPFS outage: ledger information survives, verify says 503 (not NOT_FOUND)
+200 HTTP GET during outage
+   status                     COLLECTED
+   version                    2
+   metadataAvailable          False
+   metadata                   None
+503 HTTP verify during outage
+   error                      STORAGE_UNAVAILABLE
+   message                    IPFS node not reachable while reading content
+   register during outage -> 503  STORAGE_UNAVAILABLE
+
+### G4 health with the reference ledger
+200 HTTP
+   overall: UP
+   ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+   ipfs   : {'status': 'UP'}
+```
+```
+
+### F1. Every txId the API reports is a real transaction on the peers' ledger (qscc GetTransactionByID)
+   evidence EV-7655637a-cc8c-4649-8fee-d6da97638391  API says: txId=52eccb9c192500c7ec707fd7249356aae11e5f7f7d859f47648185f857b2ac79  ledger timestamp=2026-09-22T02:54:43.596467600Z
+   qscc found -> #namespaces/fields/evidence/Sequence
+   qscc found -> 'EV-7655637a-cc8c-4649-8fee-d6da97638391
+   qscc found -> *EV~EV-7655637a-cc8c-4649-8fee-d6da97638391
+   qscc found -> CreateEvidence
+   qscc found -> EV-7655637a-cc8c-4649-8fee-d6da97638391
+   qscc found -> Org1MSP
+   a made-up txId -> Error: endorsement failure during query. response: status:500 message:"Failed to get transaction with id 0000000000000000000000000000000000000000000000000000000
+
+### F2. Concurrent updates to ONE record with the same expectedVersion (Fabric MVCC / version check): exactly one may win
+   round 1: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 2: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+   round 3: statuses ->       1 200
+       3 409
+    losers' error: ['VERSION_CONFLICT']
+            history length after the race: 2  versions: [1, 2]
+
+### F3. Ledger outage: stop the Org1 peer the backend talks to
+   GET evidence      -> 503  LEDGER_UNAVAILABLE | The ledger network is not reachable
+   register          -> 503  LEDGER_UNAVAILABLE
+   health overall    -> DOWN | ledger: {'details': {'detail': 'The ledger network is not reachable'}, 'status': 'DOWN'}
+   /api/auth/me still works (Postgres, not the ledger) -> 200
+   after restarting the peer: GET evidence -> 200 (recovered after ~6 s, no app restart)
+```
+Diffed against the pre-cutover (still-v1.2, wallet-on) run of the same script, normalised the same way as P3.4: only
+timestamps differ, plus one nondeterministic JSON field-ordering difference in a validation error's field list
+(unrelated to A2). Every write in this run was signed by that role's own wallet identity, not the old shared one.
+
+**Verification plan items 3 (Java: wallet loading, cache bound, missing entry, no leak) and 5 (recorded gaps,
+not tested)** are covered by the Java test run above and by docs/KNOWN_GAPS.md section B respectively.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

@@ -387,3 +387,30 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
 - `CaseService` gained a dependency on `EvidenceService` (case -> evidence, one direction, no cycle) for the new
   `GET /api/cases/{id}/evidence` endpoint; `CaseResponse` gained `evidenceIds`.
 - The ledger and its chaincode are completely unchanged by E3 (still v1.2 seq 3): E3 is entirely off-chain (C-06).
+
+## 15. As built (A2): per-user Fabric identity, 2026-09-22
+
+- **Chaincode `evidence` v1.3 sequence 4** (additive to the record shape; `authorise()` is the only function whose
+  logic changed, exactly as CHAINCODE_DESIGN.md section 5 predicted). Deployed only after every enabled dev user was
+  enrolled (mandatory order, docs/FABRIC_RUNBOOK.md section 8).
+- **New `ledger/` classes:** `IdentityStore` (interface), `WalletIdentity` (record), `FileWalletIdentityStore`
+  (file-backed wallet, `!memory-ledger` profile), `WalletHealthIndicator` (`/actuator/health` component `wallet`).
+- **`FabricLedgerService`:** reads and the health probe still use the single SERVICE identity (unchanged,
+  `FABRIC_CERT_PATH`/`FABRIC_KEY_PATH`); every WRITE is now signed with the acting user's own identity from
+  `IdentityStore`, over a small bounded cache of per-user `Gateway`s sharing one gRPC channel with the service
+  identity. A user with no wallet entry gets `403 LEDGER_IDENTITY_MISSING` before any chaincode call.
+- **`FabricProperties`** gained `walletDir`/`walletPassphrase` (both optional; blank wallet means every write is
+  refused, exactly like an unenrolled user - not a startup failure).
+- **`LedgerErrorCode`** gained `LEDGER_IDENTITY_MISSING` (403), raised only by the Java side, never by the chaincode.
+- **Unchanged, by design (A2-Q1, confirmed with the owner before implementing):** `LedgerService` interface,
+  `LedgerActor`, every Phase 1-3 controller and service, DTOs, the JWT/auth flow, `Permissions`, `EvidenceService`,
+  `EvidenceController`. The acting user is still built from the JWT alone (C-05); nothing about how B1-B5 or D1-E3
+  endpoints authenticate a REQUEST changed. What changed is how the LEDGER authenticates the WRITE that request causes.
+- **New operator scripts (not run by the application):** `scripts/fabric/bootstrap_registrar.sh` (one-time),
+  `scripts/fabric/enroll_users.sh` (idempotent, run whenever a user needs a wallet entry),
+  `chaincode/scripts/verify_a2_cutover.sh` (verification only).
+- **New dependency:** `bcpkix-jdk18on` (already transitively present via `fabric-gateway`; declared explicitly,
+  DECISIONS D-049, C-04).
+- **Residual, not closed by A2 (constraint C-08, revised wording):** the backend still custodies every user's private
+  key; a compromised backend host can sign as any enrolled user. See docs/A2_IDENTITY_DESIGN.md section 4 and
+  docs/KNOWN_GAPS.md.

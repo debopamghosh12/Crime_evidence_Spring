@@ -188,3 +188,21 @@ implemented as written. Differences and corrections:
    state to prove the rule.
 8. **Not done, as designed:** no transfer functions (Phase 3), no per-user certificate attributes (A2), no state-based endorsement, no
    private data, no CouchDB indexes.
+
+## 11. As built (A2, 2026-09-22): the single-function switch section 5 predicted
+
+`authorise()` (the same single function section 5 named, not renamed - "the chaincode is written with a single
+resolveActor function so that switch is a one-function change" held exactly true) now reads `role` and
+`hf.EnrollmentID` from `ctx.GetClientIdentity().GetAttributeValue(...)`, requires the `actorId`/`actorRole` arguments
+to equal them (a mismatch is `FORBIDDEN_ROLE`), and refuses any write from a certificate with no `role` attribute -
+strict, no fallback. Deployed as `evidence` **v1.3 sequence 4**, only after every enabled dev user was enrolled
+(`docs/FABRIC_RUNBOOK.md` section 8; the enrollment-before-enforcement order is mandatory, not advisory). Verified
+live through the peer CLI with three real, differently-enrolled identities (`chaincode/scripts/verify_a2_cutover.sh`):
+the pre-A2 identity `User1` (no certificate attribute) refused; a JUDGE certificate claiming COLLECTOR in the argument
+refused; a COLLECTOR certificate claiming JUDGE refused; the same COLLECTOR certificate correctly claiming COLLECTOR
+succeeds. Full output: `docs/TEST_CHECKLIST.md` Appendix P3-A2.
+
+**Section 5's honest limit is narrower now, not gone:** the chaincode no longer trusts a caller-supplied role or
+identity, but the backend still custodies every user's private key (`docs/A2_IDENTITY_DESIGN.md` section 4,
+`docs/CONSTRAINTS.md` C-08 revised wording). No other part of section 5's design changed: the MSP allow-list check,
+the role-permission table, and every function signature are exactly as designed.

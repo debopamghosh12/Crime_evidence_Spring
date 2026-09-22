@@ -52,9 +52,12 @@ func newID() string {
 
 // ---- thin wrappers so each test reads like the Java one -----------------------------------------------
 
+// A2: every wrapper below presents a certificate naming the SAME id/role it passes as chaincode arguments
+// (invokeAs), exactly as a correctly enrolled real identity would - so these tests keep exercising the
+// role-PERMISSION logic (who may do what) unchanged; identity_test.go covers the certificate checks themselves.
 func (l *fakeLedger) create(id, typ, mCid, fCid, fSha, fSize, role string) (*TxResult, error) {
 	var res *TxResult
-	err := l.invoke(org1, func(ctx contractapi.TransactionContextInterface) (e error) {
+	err := l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) (e error) {
 		res, e = c.CreateEvidence(ctx, id, "CASE-1", typ, mCid, sha, fCid, fSha, fSize, actors[role], role)
 		return
 	})
@@ -71,31 +74,31 @@ func (l *fakeLedger) createDigital(t *testing.T) string {
 }
 
 func (l *fakeLedger) update(id, ver, cidv, reason, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.UpdateEvidence(ctx, id, ver, cidv, sha, reason, actors[role], role)
 		return e
 	})
 }
 func (l *fakeLedger) status(id, ver, to, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.UpdateStatus(ctx, id, ver, to, "r", actors[role], role)
 		return e
 	})
 }
 func (l *fakeLedger) request(id, ver, reason, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.RequestDisposal(ctx, id, ver, reason, actors[role], role)
 		return e
 	})
 }
 func (l *fakeLedger) approve(id, ver, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.ApproveDisposal(ctx, id, ver, "ok", actors[role], role)
 		return e
 	})
 }
 func (l *fakeLedger) reject(id, ver, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.RejectDisposal(ctx, id, ver, "no", actors[role], role)
 		return e
 	})
@@ -217,7 +220,7 @@ func TestMalformedInputsAreRejected(t *testing.T) {
 		},
 		"bad type": func() error { _, e := l.create(newID(), "OTHER", meta1, "", "", "", roleCollector); return e },
 		"upper-case sha": func() error {
-			return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+			return l.invokeAs(org1, collectorID, roleCollector, func(ctx contractapi.TransactionContextInterface) error {
 				_, e := c.CreateEvidence(ctx, newID(), "C", typePhysical, meta1, strings.Repeat("A", 64), "", "", "", collectorID, roleCollector)
 				return e
 			})

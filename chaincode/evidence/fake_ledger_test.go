@@ -152,24 +152,64 @@ func (t *tx) GetHistoryForKey(key string) (shim.HistoryQueryIteratorInterface, e
 type fakeCtx struct {
 	stub *tx
 	msp  string
+	// A2: the certificate attributes this call presents (empty means "no cert", like an identity enrolled before
+	// A2, e.g. the old shared application identity `User1`). Set by invokeAs; plain invoke leaves both empty.
+	certRole string
+	certID   string
+	hasCert  bool
 }
 
-func (c *fakeCtx) GetStub() shim.ChaincodeStubInterface  { return c.stub }
-func (c *fakeCtx) GetClientIdentity() cid.ClientIdentity { return fakeIdentity{msp: c.msp} }
+func (c *fakeCtx) GetStub() shim.ChaincodeStubInterface { return c.stub }
+func (c *fakeCtx) GetClientIdentity() cid.ClientIdentity {
+	return fakeIdentity{msp: c.msp, role: c.certRole, id: c.certID, hasCert: c.hasCert}
+}
 
 type fakeIdentity struct {
 	cid.ClientIdentity
-	msp string
+	msp     string
+	role    string
+	id      string
+	hasCert bool
 }
 
 func (f fakeIdentity) GetMSPID() (string, error) { return f.msp, nil }
 
-// invoke runs one transaction. Each gets a new id and a timestamp one second later, like a real ledger.
+// GetAttributeValue models a Fabric CA-issued certificate's attribute extension (A2). A real certificate with no
+// `role`/`hf.EnrollmentID` attribute at all (not even present) returns found=false, which is what !hasCert models here.
+func (f fakeIdentity) GetAttributeValue(name string) (string, bool, error) {
+	if !f.hasCert {
+		return "", false, nil
+	}
+	switch name {
+	case roleAttr:
+		return f.role, true, nil
+	case enrollmentIDAttr:
+		return f.id, true, nil
+	default:
+		return "", false, nil
+	}
+}
+
+// invoke runs one transaction with NO certificate attributes (models a pre-A2 identity, e.g. the old shared
+// application identity): authorise() now refuses every write from it. Only wire this into a test deliberately;
+// existing helper wrappers use invokeAs so they keep exercising the ROLE-PERMISSION logic, not this refusal.
 func (l *fakeLedger) invoke(msp string, fn func(ctx contractapi.TransactionContextInterface) error) error {
+	return l.run(msp, "", "", false, fn)
+}
+
+// invokeAs runs one transaction as if presented by a certificate naming certID/certRole (A2). Every existing test
+// helper (create, update, status, initiate, accept, ...) calls this with the SAME id/role it passes as chaincode
+// arguments, exactly as a correctly enrolled real identity would: the certificate names the true caller.
+func (l *fakeLedger) invokeAs(msp, certID, certRole string, fn func(ctx contractapi.TransactionContextInterface) error) error {
+	return l.run(msp, certID, certRole, true, fn)
+}
+
+func (l *fakeLedger) run(msp, certID, certRole string, hasCert bool, fn func(ctx contractapi.TransactionContextInterface) error) error {
 	l.txCount++
 	l.clock = l.clock.Add(time.Second)
 	t := &tx{l: l, id: txIDFor(l.txCount), ts: l.clock, pending: map[string][]byte{}}
-	if err := fn(&fakeCtx{stub: t, msp: msp}); err != nil {
+	ctx := &fakeCtx{stub: t, msp: msp, certID: certID, certRole: certRole, hasCert: hasCert}
+	if err := fn(ctx); err != nil {
 		return err // writes are discarded, exactly as Fabric does
 	}
 	for k, v := range t.pending {

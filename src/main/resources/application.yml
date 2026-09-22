@@ -56,3 +56,7 @@ blockevidence:
     tls-cert-path: ${FABRIC_TLS_CERT_PATH:}
     cert-path: ${FABRIC_CERT_PATH:}
     key-path: ${FABRIC_KEY_PATH:}
+    # A2: per-user identities for writes (docs/A2_IDENTITY_DESIGN.md). Maintained by scripts/fabric/enroll_users.sh,
+    # never by the running app. wallet-passphrase is needed only if the wallet's keys are PKCS#8-encrypted.
+    wallet-dir: ${FABRIC_WALLET_DIR:}
+    wallet-passphrase: ${FABRIC_WALLET_PASSPHRASE:}

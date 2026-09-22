@@ -335,10 +335,16 @@ func (c *EvidenceContract) FindByCid(ctx contractapi.TransactionContextInterface
 
 type actorInfo struct{ id, role string }
 
-// authorise is the ONLY place the acting identity is resolved (design section 5, constraint C-08). In
-// Phase 2 the id and role are arguments supplied by the backend, so this checks (1) the invoking MSP is an
-// allowed organisation, (2) the actor is well formed, (3) the role is permitted for this function. It cannot
-// authenticate the role. Phase 3 (A2) replaces the argument with a certificate attribute here, and nowhere else.
+// authorise is the ONLY place the acting identity is resolved (design section 5; A2_IDENTITY_DESIGN.md section 3.2,
+// approved by the owner 2026-09-22). The certificate is now authoritative for WHO is calling and WHAT role they hold
+// (constraint C-08, reworded): id and role come from the caller's Fabric CA-issued certificate attributes, read here
+// and nowhere else. The actorID/actorRole ARGUMENTS are kept (every function signature is unchanged) and must EQUAL
+// the certificate; a mismatch is refused, which is what stops a bug or a compromised Spring layer from claiming a
+// different user's identity even while holding that user's connection. There is NO fallback to the argument alone:
+// a certificate with no role attribute (this is true of every identity issued before A2, including the old shared
+// application identity `User1`) is refused for every write, which is why enrolling every user through the operator
+// script BEFORE deploying this chaincode version is a hard prerequisite (docs/FABRIC_RUNBOOK.md section "A2
+// enrollment before enforcement"); reads never call authorise, so an unenrolled identity can still read.
 func authorise(ctx contractapi.TransactionContextInterface, actorID, actorRole string, allowed map[string]bool, what string) (actorInfo, error) {
 	msp, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil || !allowedMSPs[msp] {
@@ -347,10 +353,24 @@ func authorise(ctx contractapi.TransactionContextInterface, actorID, actorRole s
 	if !userIDRe.MatchString(actorID) || !knownRoles[actorRole] {
 		return actorInfo{}, fail(errInvalidArgument, "actor is malformed")
 	}
-	if !allowed[actorRole] {
-		return actorInfo{}, fail(errForbiddenRole, "Role %s may not %s", actorRole, what)
+	certRole, hasRole, err := ctx.GetClientIdentity().GetAttributeValue(roleAttr)
+	if err != nil {
+		return actorInfo{}, fail(errInvalidState, "cannot read certificate attributes: %v", err)
 	}
-	return actorInfo{id: actorID, role: actorRole}, nil
+	certID, hasID, err := ctx.GetClientIdentity().GetAttributeValue(enrollmentIDAttr)
+	if err != nil {
+		return actorInfo{}, fail(errInvalidState, "cannot read certificate attributes: %v", err)
+	}
+	if !hasRole || !hasID {
+		return actorInfo{}, fail(errForbiddenRole, "This identity has no role certificate attribute; only per-user enrolled identities may write evidence")
+	}
+	if certID != actorID || certRole != actorRole {
+		return actorInfo{}, fail(errForbiddenRole, "The supplied actor does not match the calling certificate")
+	}
+	if !allowed[certRole] {
+		return actorInfo{}, fail(errForbiddenRole, "Role %s may not %s", certRole, what)
+	}
+	return actorInfo{id: certID, role: certRole}, nil
 }
 
 // load reads a record, or EVIDENCE_NOT_FOUND.

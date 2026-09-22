@@ -11,15 +11,17 @@ import (
 
 // D2 custody transfer, held to the same expectations as the Java InMemoryLedgerService.
 
+// A2: as in evidence_test.go, these present a certificate matching the args they pass, so they keep exercising
+// the custody-permission logic unchanged.
 func (l *fakeLedger) initiate(id, ver, toID, toRole, reason, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.InitiateTransfer(ctx, id, ver, toID, toRole, reason, "sealed bag no. 7", actors[role], role)
 		return e
 	})
 }
 func (l *fakeLedger) respond(fn func(ctx contractapi.TransactionContextInterface, id, ver, note, actor, role string) (*TxResult, error),
 	id, ver, role string) error {
-	return l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	return l.invokeAs(org1, actors[role], role, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := fn(ctx, id, ver, "note", actors[role], role)
 		return e
 	})
@@ -110,8 +112,10 @@ func TestTheReceiverMustRespondWithTheRoleTheTransferWasAddressedTo(t *testing.T
 	l := newFakeLedger()
 	id := l.createDigital(t)
 	mustOK(t, l.initiate(id, "1", analystID, roleForensicAnalyst, "r", roleCollector))
-	// same user id, a different (still custody-capable) role: refused, the address named FORENSIC_ANALYST
-	err := l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	// same user id, a different (still custody-capable) role: refused, the address named FORENSIC_ANALYST.
+	// A contrived certificate (analystID enrolled as PROSECUTOR) is used deliberately, to reach past authorise()
+	// (which only checks permission for the FUNCTION) into the custody logic's own addressed-role check.
+	err := l.invokeAs(org1, analystID, roleProsecutor, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.AcceptTransfer(ctx, id, "2", "n", analystID, roleProsecutor)
 		return e
 	})
@@ -137,7 +141,7 @@ func TestInitiateArgumentAndStateChecks(t *testing.T) {
 	wantCode(t, l.initiate(id, "1", analystID, roleForensicAnalyst, "  ", roleCollector), errInvalidArgument)   // blank reason
 	wantCode(t, l.initiate(id, "9", analystID, roleForensicAnalyst, "r", roleCollector), errVersionConflict)    // stale
 	wantCode(t, l.initiate(newID(), "1", analystID, roleForensicAnalyst, "r", roleCollector), errNotFound)
-	err := l.invoke(org1, func(ctx contractapi.TransactionContextInterface) error {
+	err := l.invokeAs(org1, collectorID, roleCollector, func(ctx contractapi.TransactionContextInterface) error {
 		_, e := c.InitiateTransfer(ctx, id, "1", analystID, roleForensicAnalyst, "r", string(make([]byte, maxNotesLen+1)), collectorID, roleCollector)
 		return e
 	})

@@ -9,7 +9,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import com.blockevidence.backend.config.FabricProperties;
@@ -30,14 +33,31 @@ class FabricLedgerServiceTest {
 
     final JsonMapper vanilla = JsonMapper.builder().build();   // NOT Boot's lenient mapper: the service must cope itself
 
+    /** A2: no user has a wallet entry, i.e. exactly a freshly deployed backend before enroll_users.sh has run. */
+    static class StubIdentityStore implements IdentityStore {
+        final Map<String, WalletIdentity> byUser = new HashMap<>();
+
+        @Override
+        public Optional<WalletIdentity> find(String userId) {
+            return Optional.ofNullable(byUser.get(userId));
+        }
+
+        @Override
+        public List<String> expiringWithin(int days) {
+            return List.of();
+        }
+    }
+
+    final StubIdentityStore identityStore = new StubIdentityStore();
+
     FabricProperties props(String tls, String cert, String key) {
         return new FabricProperties("crimechannel", "evidence", "localhost:7051", "peer0.org1.example.com",
-                "Org1MSP", tls, cert, key, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1),
+                "Org1MSP", tls, cert, key, null, null, Duration.ofSeconds(1), Duration.ofSeconds(1), Duration.ofSeconds(1),
                 Duration.ofSeconds(1));
     }
 
     FabricLedgerService unconfigured() {
-        return new FabricLedgerService(props(null, null, null), vanilla);
+        return new FabricLedgerService(props(null, null, null), identityStore, vanilla);
     }
 
     static byte[] fixture(String name) throws IOException {
@@ -210,8 +230,8 @@ class FabricLedgerServiceTest {
     @Test
     void everyChaincodeCodeMapsToItsOwnLedgerErrorCode() {
         for (LedgerErrorCode code : LedgerErrorCode.values()) {
-            if (code == LedgerErrorCode.LEDGER_UNAVAILABLE) {
-                continue;   // raised on the Java side, never returned by the chaincode
+            if (code == LedgerErrorCode.LEDGER_UNAVAILABLE || code == LedgerErrorCode.LEDGER_IDENTITY_MISSING) {
+                continue;   // raised on the Java side (A2), never returned by the chaincode
             }
             String wire = "endorsement failure during invoke. response: status:500 message:\"" + code.name() + ": detail here\"";
             LedgerException e = FabricErrors.translate(wire, false, false);
@@ -254,23 +274,17 @@ class FabricLedgerServiceTest {
     // ----------------------------------------------------- not configured / cannot connect (no network)
 
     @Test
-    void withoutAnIdentityEveryOperationIsLedgerUnavailableAndHealthIsUnknown() {
+    void withoutAServiceIdentityEveryReadIsLedgerUnavailableAndHealthIsUnknown() {
         FabricLedgerService service = unconfigured();
-        var actor = new LedgerActor(UUID.randomUUID().toString(), Role.COLLECTOR);
         String id = "EV-" + UUID.randomUUID();
         String cid = "b" + "a".repeat(52);
 
-        List<Runnable> calls = List.of(
-                () -> service.createEvidence(new LedgerNewEvidence(id, "C", EvidenceType.PHYSICAL, cid, "a".repeat(64), null, null, null), actor),
-                () -> service.updateEvidence(id, 1, cid, "a".repeat(64), "r", actor),
-                () -> service.updateStatus(id, 1, EvidenceStatus.PROCESSING, "r", actor),
-                () -> service.requestDisposal(id, 1, "r", actor),
-                () -> service.approveDisposal(id, 1, "r", actor),
-                () -> service.rejectDisposal(id, 1, "r", actor),
+        // Reads always use the SERVICE identity (A2 does not touch them); unconfigured means LEDGER_UNAVAILABLE.
+        List<Runnable> reads = List.of(
                 () -> service.getEvidence(id),                 // must throw, NOT return Optional.empty()
                 () -> service.getHistory(id),
                 () -> service.findEvidenceIdsByCid(cid));
-        for (Runnable call : calls) {
+        for (Runnable call : reads) {
             assertThatThrownBy(call::run).isInstanceOfSatisfying(LedgerException.class,
                     e -> assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE));
         }
@@ -279,10 +293,49 @@ class FabricLedgerServiceTest {
         assertThat(health.detail()).contains("not configured").contains("crimechannel").contains("evidence");
     }
 
+    // ------------------------------------------------------------------------------------------------- A2
+
+    @Test
+    void aUserWithNoWalletEntryGetsLedgerIdentityMissingOnEveryWriteRegardlessOfTheServiceIdentity() {
+        // Even with a (fake, unreadable) SERVICE identity "configured", a write is refused for the ACTOR's
+        // missing wallet entry before any connection is attempted - never a silent fallback to the service identity.
+        FabricLedgerService service = new FabricLedgerService(props("a", "b", "c"), identityStore, vanilla);
+        var actor = new LedgerActor(UUID.randomUUID().toString(), Role.COLLECTOR);
+        String id = "EV-" + UUID.randomUUID();
+        String cid = "b" + "a".repeat(52);
+
+        List<Runnable> writes = List.of(
+                () -> service.createEvidence(new LedgerNewEvidence(id, "C", EvidenceType.PHYSICAL, cid, "a".repeat(64), null, null, null), actor),
+                () -> service.updateEvidence(id, 1, cid, "a".repeat(64), "r", actor),
+                () -> service.updateStatus(id, 1, EvidenceStatus.PROCESSING, "r", actor),
+                () -> service.requestDisposal(id, 1, "r", actor),
+                () -> service.approveDisposal(id, 1, "r", actor),
+                () -> service.rejectDisposal(id, 1, "r", actor),
+                () -> service.initiateTransfer(id, 1, UUID.randomUUID().toString(), Role.FORENSIC_ANALYST, "r", null, actor),
+                () -> service.acceptTransfer(id, 1, "r", actor),
+                () -> service.rejectTransfer(id, 1, "r", actor),
+                () -> service.cancelTransfer(id, 1, "r", actor));
+        for (Runnable call : writes) {
+            assertThatThrownBy(call::run).isInstanceOfSatisfying(LedgerException.class, e -> {
+                assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_IDENTITY_MISSING);
+                assertThat(e.getStatus().value()).isEqualTo(403);
+                assertThat(e.getMessage()).doesNotContain(actor.userId());   // the user id itself is not secret, but nothing else leaks
+            });
+        }
+    }
+
+    @Test
+    void findPendingTransfersIsAReadAndUsesTheServiceIdentityNotTheCaller() {
+        // No actor is even passed to this call (LedgerService.findPendingTransferIds takes a bare userId): it can
+        // only be a read, so an unconfigured service identity - not a missing wallet entry - is what it reports.
+        assertThatThrownBy(() -> unconfigured().findPendingTransferIds(UUID.randomUUID().toString()))
+                .isInstanceOfSatisfying(LedgerException.class, e -> assertThat(e.ledgerCode()).isEqualTo(LedgerErrorCode.LEDGER_UNAVAILABLE));
+    }
+
     @Test
     void unreadableIdentityFilesAreLedgerUnavailableAndHealthIsDown(@TempDir Path dir) {
         String missing = dir.resolve("does-not-exist.pem").toString();
-        FabricLedgerService service = new FabricLedgerService(props(missing, missing, missing), vanilla);
+        FabricLedgerService service = new FabricLedgerService(props(missing, missing, missing), identityStore, vanilla);
 
         assertThatThrownBy(() -> service.getEvidence("EV-" + UUID.randomUUID()))
                 .isInstanceOfSatisfying(LedgerException.class, e -> {
@@ -293,11 +346,12 @@ class FabricLedgerServiceTest {
     }
 
     @Test
-    void propertiesReportWhetherTheIdentityIsConfigured() {
+    void propertiesReportWhetherTheServiceIdentityAndTheWalletAreConfigured() {
         assertThat(props(null, null, null).isConfigured()).isFalse();
         assertThat(props("a", "b", " ").isConfigured()).isFalse();
         assertThat(props("a", "b", "c").isConfigured()).isTrue();
         assertThat(props("a", "b", "c").toString()).doesNotContain("secret");
+        assertThat(props(null, null, null).isWalletConfigured()).isFalse();   // walletDir defaults to null in props()
     }
 
     @Test

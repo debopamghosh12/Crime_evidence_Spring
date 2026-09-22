@@ -69,9 +69,16 @@ func set(items ...string) map[string]bool {
 }
 
 // allowedMSPs are the organisations whose identities may invoke this chaincode: the backend's org(s).
-// This is the ONLY authentication the chaincode performs in Phase 2 (constraint C-08): the role itself is
-// supplied by the caller. It stops other channel members from invoking, not a compromised backend.
 var allowedMSPs = set("Org1MSP", "Org2MSP")
+
+// A2: certificate attribute names authorise() reads (docs/A2_IDENTITY_DESIGN.md section 3.1). roleAttr is set at
+// registration (`--id.attrs 'role=<ROLE>:ecert'`); enrollmentIDAttr must be explicitly requested at enrollment
+// (`--enrollment.attrs 'role,hf.EnrollmentID'`) or it is silently absent from the certificate (proved by the spike,
+// TEST_CHECKLIST Appendix P3-A).
+const (
+	roleAttr         = "role"
+	enrollmentIDAttr = "hf.EnrollmentID"
+)
 
 // Status transitions (PROVISIONAL, finalised with D1 in Phase 3). DISPOSED is deliberately absent as a
 // target: it is only entered through ApproveDisposal, never through UpdateStatus.

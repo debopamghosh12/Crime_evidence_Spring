@@ -34,15 +34,22 @@ No passwords, signing keys, tokens or credentials in source, `application*.yml` 
 They come from environment variables (FEATURE_LIST.md K3). The app must refuse to start without the JWT
 signing secret rather than fall back to a built-in one.
 
-## C-08 — The chaincode trusts the backend-supplied role until A2 lands (KNOWN GAP, NOT RESOLVED)
-Until per-user Fabric identities (A2, Phase 3) exist, the Spring backend connects with ONE application
-identity and passes `actorId`/`actorRole` to the chaincode as arguments, which the chaincode checks against
-its ACL table but cannot independently authenticate. This protects against bugs in the Spring layer and gives
-an immutable record of who acted; it does **not** protect against a compromised or malicious backend, which
-could claim any role. Do not describe the chaincode role check as authentication, in code, docs or the report.
-Closing the gap is A2: users enrolled through Fabric CA with a `role` certificate attribute, read via the
-chaincode's single `resolveActor` function (CHAINCODE_DESIGN.md section 5). Approved by the project owner
-2026-09-22 (decision G5).
+## C-08 — The chaincode authenticates user and role from a CA-issued certificate; the backend custodies user keys (REVISED, NOT CLOSED)
+As of A2 (deployed 2026-09-22, `evidence` v1.3): the chaincode's `authorise()` reads `role` and `hf.EnrollmentID`
+from the caller's Fabric CA-issued certificate, not from an argument alone. Every write is signed with the ACTING
+USER's own enrolled identity (`FabricLedgerService`, per-user `Gateway`, `IdentityStore`); the `actorId`/`actorRole`
+arguments are kept and must equal the certificate, so a bug or forged value supplying the wrong actor is refused on
+the ledger, and `qscc GetTransactionByID` independently shows who really signed each write.
+
+**This closes the specific hole C-08 originally named** (a bug or malicious value in the Spring layer claiming any
+role) **but does not make the chaincode's role check independent of the backend host.** The backend still custodies
+every user's private key in a wallet it reads (`FileWalletIdentityStore`); a compromised backend host can still sign
+as any enrolled user, exactly as a compromised backend could act as any role before A2. Do not describe this as
+"nothing can forge a user's identity" - describe it as "the chaincode can no longer be told the wrong actor by a bug
+or a forged argument; a compromised backend host is a different, still-open risk." Registrar credentials (offline,
+least-privilege, never held by the running app) and peer-side certificate revocation (no channel CRL configured)
+are further residuals, listed in `docs/A2_IDENTITY_DESIGN.md` section 4 and `docs/KNOWN_GAPS.md`.
+Approved by the project owner 2026-09-22 (A2-Q1..Q8, this exact wording is A2-Q7).
 
 ## C-09 — Never run the IPFS node outside `--offline` mode with real or realistic evidence data
 A default Kubo node joins the public IPFS network and serves anything pinned on it to anyone who learns the

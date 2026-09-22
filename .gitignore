@@ -40,4 +40,5 @@ application-local.yml
 ### Chaincode build artifacts (regenerable: go mod vendor / go build) ###
 chaincode/evidence/vendor/
 chaincode/**/*.exe
+chaincode/evidence/evidence
 *.tar.gz

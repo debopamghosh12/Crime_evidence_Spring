@@ -2,7 +2,7 @@
 
 **Purpose.** An honest list of what is NOT tested, NOT built, or only partly true, so the report and the demo claim nothing that
 was not done (FEATURE_LIST.md: "keep an honest split so nothing is claimed that is not built"). Every entry names where the detail
-lives. Last updated 2026-09-22 (Phase 3 D1-D3/E1-E3 built and owner-approved; A2 in progress). Update this file whenever a gap is closed or a new one is found; never delete an
+lives. Last updated 2026-09-22 (Phase 3 D1-D3/E1-E3 and A2 built and owner-approved). Update this file whenever a gap is closed or a new one is found; never delete an
 entry silently, mark it resolved with the date.
 
 ## A. Deliberately left UNTESTED (owner decision 2026-09-22)
@@ -20,7 +20,8 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 | Gap | Status | Detail |
 |---|---|---|
-| **C-08: the chaincode trusts the role the backend passes** (not authenticated) | OPEN, closed in part by A2 (Phase 3); see the A2 design for the residual | CONSTRAINTS.md C-08, CHAINCODE_DESIGN.md section 5 and 10 |
+| **C-08: the chaincode trusts the role the backend passes** (not authenticated) | **REVISED 2026-09-22 (A2), not fully closed.** The chaincode now authenticates user+role from a Fabric CA certificate, and a forged argument is refused - but the backend still custodies every user's private key, so a compromised backend host can sign as any enrolled user | CONSTRAINTS.md C-08 (reworded), A2_IDENTITY_DESIGN.md section 4, TEST_CHECKLIST Appendix P3-A2 |
+| **A2 residuals, not closed by design:** registrar credentials exist offline (their loss lets an attacker enroll `role=JUDGE` users); no peer-side certificate revocation (no channel CRL configured, so a revoked-at-the-CA identity still works until its certificate expires); role/attribute changes need re-enrollment; certificate expiry (1 year) and renewal are operational, not automatic | OPEN by design | A2_IDENTITY_DESIGN.md section 4, `docs/DECISIONS.md` D-047..D-050 |
 | **IPFS content is not private.** A default node joins the public network; even `--offline` stores files and metadata unencrypted | OPEN. Mitigated for dev by `--offline` (C-09). Real protection needs a private swarm or envelope encryption (F2, stretch) | DECISIONS D-020, CONSTRAINTS C-09 |
 | Access tokens outlive user deactivation by up to 15 min; refresh tokens are not purged | OPEN | ARCHITECTURE section 10 |
 | Read access is not limited by case (A5 unscheduled): any authenticated role reads any evidence | OPEN | D-019, B3 write-up |
@@ -41,9 +42,10 @@ These were considered, judged out of scope for the final-year deliverable, and a
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2, E3 (2026-09-22). **Still open from Phase 3:** A2 (per-user Fabric identities, design awaiting
-approval; C-08 still open); D4 (optional). Then Phase 4 (G3, H1-H4, A6) and Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user
-management) and A5 (case-level access) appear in no build phase; users exist only through the dev seeder.
+Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Then Phase 4 (G3, H1-H4, A6)
+and Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
+only through the dev seeder, all 6 of whom are now A2-enrolled (`scripts/fabric/enroll_users.sh`); a user added once A4 exists
+would need the same enrollment step run for them before their first write (docs/FABRIC_RUNBOOK.md section 8).
 
 Phase 3 specifics, all found while building it:
 - **No user-lookup endpoint:** a client must already know a receiver's user id to start a custody transfer, and the custody timeline shows
@@ -64,6 +66,8 @@ Phase 3 specifics, all found while building it:
 - **Verified live on real infrastructure:** registration with streaming hash, on-disk corruption detection (TAMPERED) and missing
   content (NOT_FOUND), versioned updates, disposal instead of delete, history with real Fabric transaction ids, concurrent-update
   safety (exactly one winner), ledger outage handling and recovery, restart persistence, the chaincode's own role and state checks
-  (driven directly through the peer CLI).
+  (driven directly through the peer CLI); custody transfer, status changes, cases, evidence-case links; A2 - every write now
+  signed with the actor's own certificate (`qscc` shows the correct creator), the pre-A2 identity and mismatched-certificate
+  cases refused through the peer CLI with real enrolled identities (TEST_CHECKLIST Appendix P3-A2).
 - **Verified only against a fake or in-memory stand-in:** chaincode events; the Java service against an unavailable orderer/other org.
-- **Not verified at all:** section A above, and everything in sections B-D marked OPEN or NOT BUILT.
+- **Not verified at all:** section A above, the A2 residuals in section B, and everything in sections B-D marked OPEN or NOT BUILT.
