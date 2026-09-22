@@ -714,3 +714,21 @@ as sent (no status field ever offered to lose). Opened an existing case with rea
 (`FE-TEST-001`, populated across earlier checkpoints) and confirmed all 3 real evidence ids - including both a
 memory-ledger-era item and D-071's real-Fabric item - listed correctly and linked through to their own detail
 pages, proving E3's off-chain link table doesn't care which ledger backend registered the evidence.
+
+## D-073
+
+**Frontend integration: Dashboard, and CrimeBox deleted entirely (Part B), verified live against real Fabric.**
+`dashboard/[userId]/page.tsx` was the source repo's entire CrimeBox onboarding surface - the "Join/Create a
+Crime Box" landing state, the head-officer-only key-reveal panel, all of it - not a small piece of the page but
+the page's main branch. Rewrote it against the real `DashboardResponse` (H2: totalEvidence, byStatus, byType,
+byCase, activityByDay) and a small live preview from `ActivityEntryResponse` (H3), then deleted
+`CrimeBoxContext.tsx` and `components/crime-box/` outright and removed `CrimeBoxProvider` from the root layout -
+Part B says "remove entirely, including any onboarding step that assumes it exists," and the CrimeBoxProvider
+wrapping the whole app was exactly that. A repo-wide grep after the edit confirms zero remaining references
+outside one explanatory comment.
+
+**Verified live** (as PROSECUTOR, against the real Fabric-backed server): the dashboard rendered real,
+non-trivial aggregate numbers accumulated across this dev database's whole history (117 total evidence items,
+a real status/type breakdown) and a real activity feed showing this session's own just-created transfer events
+with correct actor ids/roles/case numbers. Cross-checked `totalEvidence` and `byStatus` against a direct
+`GET /api/dashboard` call - exact match. No console errors on load.
