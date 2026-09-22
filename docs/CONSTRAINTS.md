@@ -56,3 +56,13 @@ A default Kubo node joins the public IPFS network and serves anything pinned on 
 CID; CIDs are stored on the ledger and returned by the API. Development and demos run
 `ipfs/kubo daemon --offline`. Networked or production use requires a private swarm and/or envelope encryption
 (F2) first. *Why:* see DECISIONS D-020, found by observing a default node fetch data from strangers.
+
+## C-10 — The server-held master key is a single point of compromise for all content keys (NOT CLOSED)
+As of F2/F3 (`docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md`): every user's per-user private key is stored encrypted
+at rest under one AES-256 master key, held only in the running application's configuration
+(`BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY`). Whoever holds that master key can decrypt every user's private key, and
+therefore unwrap every evidence content key for every user, on every evidence item, past and future. Its
+exposure defeats F2/F3 entirely - it is not a residual on top of envelope encryption, it is the same trust
+boundary C-08 already accepts for Fabric identity keys, now extended to content keys. No HSM, no key
+rotation, and no split-custody scheme (e.g. Shamir sharing of the master key) are in scope. Approved by the
+project owner 2026-09-22 alongside the F2/F3 design approval.

@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.blockevidence.backend.crypto.ContentKeyService;
 import com.blockevidence.backend.domain.CaseRole;
 import com.blockevidence.backend.domain.CaseStatus;
 import com.blockevidence.backend.dto.AddMemberRequest;
@@ -51,7 +52,8 @@ class CaseServiceTest {
     final CaseEvidenceLinkRepository evidenceLinks = mock(CaseEvidenceLinkRepository.class);
     final UserRepository users = mock(UserRepository.class);
     final EvidenceService evidenceService = mock(EvidenceService.class);
-    final CaseService service = new CaseService(cases, members, evidenceLinks, users, evidenceService, clock);
+    final ContentKeyService contentKeys = mock(ContentKeyService.class);
+    final CaseService service = new CaseService(cases, members, evidenceLinks, users, evidenceService, contentKeys, clock);
 
     final AuthenticatedUser admin = new AuthenticatedUser(UUID.randomUUID(), "admin@example.org", Role.ADMIN);
     final List<CaseMember> stored = new ArrayList<>();
@@ -127,14 +129,14 @@ class CaseServiceTest {
         wireRepositories();
         CaseResponse c = service.create(create(user(Role.COLLECTOR, true).getId()), admin);
         assertThat(service.get(c.id()).evidenceIds()).isEmpty();
-        assertThat(service.evidence(c.id())).isEmpty();
+        assertThat(service.evidence(c.id(), admin)).isEmpty();
 
         linked.add(new CaseEvidenceLink(c.id(), "EV-1", admin.userId(), clock.instant()));
-        when(evidenceService.get("EV-1", false)).thenReturn(sampleEvidence("EV-1"));
+        when(evidenceService.get("EV-1", false, admin)).thenReturn(sampleEvidence("EV-1"));
 
         assertThat(service.get(c.id()).evidenceIds()).containsExactly("EV-1");
-        assertThat(service.evidence(c.id())).extracting(EvidenceResponse::evidenceId).containsExactly("EV-1");
-        assertThatThrownBy(() -> service.evidence(UUID.randomUUID())).isInstanceOfSatisfying(ApiException.class,
+        assertThat(service.evidence(c.id(), admin)).extracting(EvidenceResponse::evidenceId).containsExactly("EV-1");
+        assertThatThrownBy(() -> service.evidence(UUID.randomUUID(), admin)).isInstanceOfSatisfying(ApiException.class,
                 e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 

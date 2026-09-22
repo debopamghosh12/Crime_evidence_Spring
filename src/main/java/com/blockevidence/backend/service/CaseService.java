@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import com.blockevidence.backend.crypto.ContentKeyService;
 import com.blockevidence.backend.domain.CaseRole;
 import com.blockevidence.backend.dto.AddMemberRequest;
 import com.blockevidence.backend.dto.CaseResponse;
@@ -47,15 +48,17 @@ public class CaseService {
     private final CaseEvidenceLinkRepository evidenceLinks;
     private final UserRepository users;
     private final EvidenceService evidenceService;
+    private final ContentKeyService contentKeys;
     private final Clock clock;
 
     public CaseService(CaseFileRepository cases, CaseMemberRepository members, CaseEvidenceLinkRepository evidenceLinks,
-            UserRepository users, EvidenceService evidenceService, Clock clock) {
+            UserRepository users, EvidenceService evidenceService, ContentKeyService contentKeys, Clock clock) {
         this.cases = cases;
         this.members = members;
         this.evidenceLinks = evidenceLinks;
         this.users = users;
         this.evidenceService = evidenceService;
+        this.contentKeys = contentKeys;
         this.clock = clock;
     }
 
@@ -86,10 +89,10 @@ public class CaseService {
      * {@code EvidenceService.findByCid}); this is a summary endpoint, not expected to be called per row of a list.
      */
     @Transactional(readOnly = true)
-    public List<EvidenceResponse> evidence(UUID caseId) {
+    public List<EvidenceResponse> evidence(UUID caseId, AuthenticatedUser user) {
         load(caseId);
         return evidenceLinks.findByCaseIdOrderByLinkedAtAsc(caseId).stream()
-                .map(link -> evidenceService.get(link.getEvidenceId(), false)).toList();
+                .map(link -> evidenceService.get(link.getEvidenceId(), false, user)).toList();
     }
 
     @Transactional
@@ -132,6 +135,12 @@ public class CaseService {
             throw new ApiException(HttpStatus.CONFLICT, "ALREADY_A_MEMBER", "This user is already on the case team");
         }
         members.save(new CaseMember(caseId, user.getId(), request.caseRole(), actor.userId(), clock.instant()));
+        // F3 (design section 5): access just GRANTED - re-wrap the content key of every evidence item already
+        // linked to this case for the new member. Best-effort per item inside ContentKeyService; membership
+        // itself must succeed even if a key backfill has a hiccup on one item.
+        for (CaseEvidenceLink link : evidenceLinks.findByCaseIdOrderByLinkedAtAsc(caseId)) {
+            contentKeys.reWrapForNewUser(link.getEvidenceId(), user.getId());
+        }
         return toResponse(file);
     }
 
@@ -145,6 +154,12 @@ public class CaseService {
         CaseMember member = members.findByCaseIdAndUserId(caseId, userId).orElseThrow(() ->
                 new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "That user is not on this case team"));
         members.delete(member);
+        // F3 (design section 5/8): access just REVOKED - delete the removed user's wrapped copy for every
+        // evidence item linked to this case. Not retroactive (a stated limit): content already decrypted before
+        // this point is not protected, and the ECK itself is not rotated.
+        for (CaseEvidenceLink link : evidenceLinks.findByCaseIdOrderByLinkedAtAsc(caseId)) {
+            contentKeys.revoke(link.getEvidenceId(), userId);
+        }
         return toResponse(file);
     }
 

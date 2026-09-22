@@ -2,20 +2,27 @@ package com.blockevidence.backend.service;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import com.blockevidence.backend.config.UploadProperties;
+import com.blockevidence.backend.crypto.AesGcmCodec;
+import com.blockevidence.backend.crypto.ContentKeyService;
 import com.blockevidence.backend.domain.Cid;
 import com.blockevidence.backend.domain.EvidenceMetadata;
 import com.blockevidence.backend.domain.EvidenceType;
 import com.blockevidence.backend.dto.DisposalDecisionBody;
 import com.blockevidence.backend.dto.DisposalRequestBody;
 import com.blockevidence.backend.dto.EvidenceResponse;
+import com.blockevidence.backend.dto.FileDescriptor;
 import com.blockevidence.backend.dto.HistoryEntryResponse;
 import com.blockevidence.backend.dto.RegisterEvidenceRequest;
 import com.blockevidence.backend.dto.UpdateEvidenceRequest;
@@ -30,9 +37,11 @@ import com.blockevidence.backend.ledger.LedgerNewEvidence;
 import com.blockevidence.backend.ledger.LedgerService;
 import com.blockevidence.backend.model.CaseEvidenceLink;
 import com.blockevidence.backend.model.CaseFile;
+import com.blockevidence.backend.model.CaseMember;
 import com.blockevidence.backend.notification.NotificationService;
 import com.blockevidence.backend.repository.CaseEvidenceLinkRepository;
 import com.blockevidence.backend.repository.CaseFileRepository;
+import com.blockevidence.backend.repository.CaseMemberRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.storage.ContentNotFoundException;
 import com.blockevidence.backend.storage.IpfsClient;
@@ -70,12 +79,15 @@ public class EvidenceService {
     private final UploadProperties upload;
     private final CaseFileRepository cases;
     private final CaseEvidenceLinkRepository caseLinks;
+    private final CaseMemberRepository caseMembers;
     private final NotificationService notifications;
+    private final ContentKeyService contentKeys;
     private final Clock clock;
 
     public EvidenceService(LedgerService ledger, IpfsClient ipfs, VerificationService verification, JsonMapper json,
             UploadProperties upload, CaseFileRepository cases, CaseEvidenceLinkRepository caseLinks,
-            NotificationService notifications, Clock clock) {
+            CaseMemberRepository caseMembers, NotificationService notifications, ContentKeyService contentKeys,
+            Clock clock) {
         this.ledger = ledger;
         this.ipfs = ipfs;
         this.verification = verification;
@@ -83,7 +95,9 @@ public class EvidenceService {
         this.upload = upload;
         this.cases = cases;
         this.caseLinks = caseLinks;
+        this.caseMembers = caseMembers;
         this.notifications = notifications;
+        this.contentKeys = contentKeys;
         this.clock = clock;
     }
 
@@ -124,15 +138,30 @@ public class EvidenceService {
         LedgerActor actor = actor(user);
         String evidenceId = "EV-" + UUID.randomUUID();
         List<String> pinned = new ArrayList<>();
+        // F2 (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md section 3): one AES-256 content key (ECK) for this
+        // evidence item, reused for the file and every future metadata version. Never persisted; wrapped per
+        // authorised user below and discarded once this method returns.
+        byte[] eck = contentKeys.newKey();
         try {
-            StoredFile stored = hasFile ? storeFile(file, pinned) : null;
+            StoredFile stored = hasFile ? storeFile(file, pinned, eck) : null;
             EvidenceMetadata metadata = new EvidenceMetadata(EvidenceMetadata.SCHEMA_VERSION, evidenceId,
                     request.caseId(), request.type(), request.description(), request.location(), request.notes(),
                     request.collectedAt(), actor.userId(),
                     stored == null ? null : new EvidenceMetadata.FileInfo(stored.name(), stored.contentType(),
                             stored.size(), stored.sha256()),
                     1, null);
-            StoredDocument document = storeMetadata(metadata, pinned);
+            StoredDocument document = storeMetadata(metadata, pinned, eck);
+            // Design section 5: wrapping for the REGISTRANT is mandatory here, in the same try/compensate block
+            // as the storage calls - a failure (e.g. no provisioned keypair) aborts registration and unpins,
+            // exactly like any other pre-ledger storage failure, so nothing is ever created that nobody can read.
+            contentKeys.wrapForRegistrant(evidenceId, user.userId(), eck);
+            // Other current case members: best-effort (design section 5/8), still inside this block so it runs
+            // before the ledger write, but a failure for one of THEM does not abort registration.
+            for (CaseMember member : caseMembers.findByCaseIdOrderByAddedAtAsc(caseFile.getId())) {
+                if (!member.getUserId().equals(user.userId())) {
+                    contentKeys.wrapBestEffort(evidenceId, member.getUserId(), eck);
+                }
+            }
             ledger.createEvidence(new LedgerNewEvidence(evidenceId, request.caseId(), request.type(), document.cid(),
                     document.sha256(), stored == null ? null : stored.cid(), stored == null ? null : stored.sha256(),
                     stored == null ? null : stored.size()), actor);
@@ -143,32 +172,41 @@ public class EvidenceService {
         // The ledger write succeeded, so the evidence exists and is correct (its own caseId string is the source
         // of truth) regardless of what happens next; this just makes it findable from the case (E3).
         caseLinks.save(new CaseEvidenceLink(caseFile.getId(), evidenceId, user.userId(), clock.instant()));
-        return get(evidenceId, false);
+        return get(evidenceId, false, user);
     }
 
-    private StoredFile storeFile(MultipartFile file, List<String> pinned) {
+    private StoredFile storeFile(MultipartFile file, List<String> pinned, byte[] eck) {
         String name = safeFileName(file.getOriginalFilename());
-        // C1: the hash and byte count are computed while the bytes stream to IPFS, in a single read.
-        try (HashingInputStream in = new HashingInputStream(file.getInputStream())) {
-            String cid = ipfs.pin(in, name);
-            pinned.add(cid);
-            if (in.byteCount() != file.getSize()) {
-                // The whole upload must have been read; anything else means the CID is for truncated content.
-                throw new IllegalStateException("Uploaded " + in.byteCount() + " bytes but the file has "
-                        + file.getSize());
+        try {
+            // C1's streaming property is preserved: plaintext flows in, is counted (to sanity-check the whole
+            // upload was read), encrypted (F2), then hashed again - the hash pinned/recorded is of the CIPHERTEXT,
+            // never the plaintext (design section 7), so VerificationService needs no key to check it later.
+            HashingInputStream plainCount = new HashingInputStream(file.getInputStream());
+            InputStream encrypted = AesGcmCodec.encryptingStream(eck, plainCount);
+            try (HashingInputStream cipherHash = new HashingInputStream(encrypted)) {
+                String cid = ipfs.pin(cipherHash, name);
+                pinned.add(cid);
+                if (plainCount.byteCount() != file.getSize()) {
+                    // The whole upload must have been read; anything else means the CID is for truncated content.
+                    throw new IllegalStateException("Uploaded " + plainCount.byteCount() + " bytes but the file has "
+                            + file.getSize());
+                }
+                // The reported size is the PLAINTEXT byte count (what a person/report cares about), not the
+                // longer ciphertext blob actually pinned (IV + tag overhead, AesGcmCodec.OVERHEAD_BYTES).
+                return new StoredFile(cid, cipherHash.sha256Hex(), plainCount.byteCount(), name, file.getContentType());
             }
-            return new StoredFile(cid, in.sha256Hex(), in.byteCount(), name, file.getContentType());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
     }
 
-    private StoredDocument storeMetadata(EvidenceMetadata metadata, List<String> pinned) {
+    private StoredDocument storeMetadata(EvidenceMetadata metadata, List<String> pinned, byte[] eck) {
         byte[] bytes = json.writeValueAsBytes(metadata);
-        String cid = ipfs.pin(new ByteArrayInputStream(bytes), metadata.evidenceId() + ".v"
+        byte[] ciphertext = AesGcmCodec.encrypt(eck, bytes);
+        String cid = ipfs.pin(new ByteArrayInputStream(ciphertext), metadata.evidenceId() + ".v"
                 + metadata.metadataVersion() + ".json");
         pinned.add(cid);
-        return new StoredDocument(cid, Sha256.hex(bytes));
+        return new StoredDocument(cid, Sha256.hex(ciphertext));
     }
 
     /**
@@ -193,18 +231,19 @@ public class EvidenceService {
 
     // ------------------------------------------------------------------------------- B3, C3, versions
 
-    public EvidenceResponse get(String evidenceId, boolean verify) {
+    public EvidenceResponse get(String evidenceId, boolean verify, AuthenticatedUser user) {
         LedgerEvidenceRecord record = load(evidenceId);
         VerificationResponse result = verify ? verification.verify(record) : VerificationResponse.notChecked(evidenceId);
         alertIfTampered(record, result);
-        return toResponse(record, result);
+        return toResponse(record, result, user);
     }
 
-    public List<EvidenceResponse> findByCid(String cid) {
+    public List<EvidenceResponse> findByCid(String cid, AuthenticatedUser user) {
         if (!Cid.isValid(cid)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CID", "Not a valid content identifier");
         }
-        List<EvidenceResponse> found = ledger.findEvidenceIdsByCid(cid).stream().map(id -> get(id, false)).toList();
+        List<EvidenceResponse> found = ledger.findEvidenceIdsByCid(cid).stream()
+                .map(id -> get(id, false, user)).toList();
         if (found.isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No evidence references this CID");
         }
@@ -212,14 +251,14 @@ public class EvidenceService {
     }
 
     /** B4: any earlier version stays readable, with the metadata document that version pointed at. */
-    public EvidenceResponse getVersion(String evidenceId, int version) {
+    public EvidenceResponse getVersion(String evidenceId, int version, AuthenticatedUser user) {
         LedgerEvidenceRecord record = ledger.getHistory(evidenceId).stream()
                 .map(LedgerHistoryEntry::record)
                 .filter(r -> r.version() == version)
                 .findFirst()
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND",
                         "Evidence " + evidenceId + " has no version " + version));
-        return toResponse(record, VerificationResponse.notChecked(evidenceId));
+        return toResponse(record, VerificationResponse.notChecked(evidenceId), user);
     }
 
     public List<HistoryEntryResponse> history(String evidenceId) {
@@ -254,7 +293,14 @@ public class EvidenceService {
             throw new LedgerException(LedgerErrorCode.VERSION_CONFLICT, "Expected version " + request.expectedVersion()
                     + " but the record is at version " + current.version());
         }
-        EvidenceMetadata base = readVerifiedMetadata(current);
+        // F2 (design section 6): update() needs the ECK to encrypt the new version, so it must unwrap it first -
+        // using the ACTING user's own wrapped copy. A side effect worth being explicit about: a user with no
+        // wrapped-key row for this item cannot update it (403), which is new for encrypted evidence - today ANY
+        // authenticated role can update ANY evidence item (A5 gap, KNOWN_GAPS section D).
+        byte[] eck = contentKeys.unwrap(evidenceId, user.userId()).orElseThrow(() ->
+                new ApiException(HttpStatus.FORBIDDEN, "KEY_NOT_AUTHORISED",
+                        "You are not authorised to decrypt evidence " + evidenceId));
+        EvidenceMetadata base = readVerifiedMetadata(current, eck);
         EvidenceMetadata next = new EvidenceMetadata(EvidenceMetadata.SCHEMA_VERSION, base.evidenceId(),
                 base.caseId(), base.evidenceType(),
                 request.description() != null ? request.description() : base.description(),
@@ -265,34 +311,46 @@ public class EvidenceService {
 
         List<String> pinned = new ArrayList<>();
         try {
-            StoredDocument document = storeMetadata(next, pinned);
+            StoredDocument document = storeMetadata(next, pinned, eck);
             ledger.updateEvidence(evidenceId, request.expectedVersion(), document.cid(), document.sha256(),
                     request.reason(), actor(user));
         } catch (RuntimeException e) {
             compensate(pinned);
             throw e;
         }
-        return get(evidenceId, false);
+        return get(evidenceId, false, user);
     }
 
     /**
      * The current metadata is the base of the next version, so it is hash-checked against the ledger first:
-     * building on tampered metadata would launder the tampering into a fresh, ledger-blessed version.
+     * building on tampered metadata would launder the tampering into a fresh, ledger-blessed version. The hash
+     * check is over the CIPHERTEXT (design section 7, unchanged shape from before F2); decryption is a new step
+     * only after that check passes.
      */
-    private EvidenceMetadata readVerifiedMetadata(LedgerEvidenceRecord record) {
-        byte[] bytes;
+    private EvidenceMetadata readVerifiedMetadata(LedgerEvidenceRecord record, byte[] eck) {
+        byte[] ciphertext;
         try {
-            bytes = ipfs.read(record.metadataCid(), in -> in.readNBytes(MAX_METADATA_BYTES + 1));
+            ciphertext = ipfs.read(record.metadataCid(),
+                    in -> in.readNBytes(MAX_METADATA_BYTES + AesGcmCodec.OVERHEAD_BYTES + 1));
         } catch (ContentNotFoundException e) {
             throw new ApiException(HttpStatus.CONFLICT, "METADATA_UNAVAILABLE",
                     "The current metadata document is missing from storage, so it cannot be updated");
         }
-        if (bytes.length > MAX_METADATA_BYTES || !Sha256.hex(bytes).equals(record.metadataSha256())) {
+        if (ciphertext.length > MAX_METADATA_BYTES + AesGcmCodec.OVERHEAD_BYTES
+                || !Sha256.hex(ciphertext).equals(record.metadataSha256())) {
             throw new ApiException(HttpStatus.CONFLICT, "INTEGRITY_CHECK_FAILED",
                     "The stored metadata does not match the ledger hash; refusing to build on it");
         }
+        byte[] plaintext;
         try {
-            return json.readValue(bytes, EvidenceMetadata.class);
+            plaintext = AesGcmCodec.decrypt(eck, ciphertext);
+        } catch (IllegalArgumentException e) {
+            // The GCM tag failed to verify - should not happen given the SHA-256 check just passed, but is a
+            // second, independent integrity signal (design section 7), so it is treated the same way: refuse.
+            throw new ApiException(HttpStatus.CONFLICT, "INTEGRITY_CHECK_FAILED", "The stored metadata could not be decrypted");
+        }
+        try {
+            return json.readValue(plaintext, EvidenceMetadata.class);
         } catch (JacksonException e) {
             throw new ApiException(HttpStatus.CONFLICT, "INTEGRITY_CHECK_FAILED", "The stored metadata is unreadable");
         }
@@ -302,17 +360,17 @@ public class EvidenceService {
 
     public EvidenceResponse requestDisposal(String evidenceId, DisposalRequestBody body, AuthenticatedUser user) {
         ledger.requestDisposal(evidenceId, body.expectedVersion(), body.reason(), actor(user));
-        return get(evidenceId, false);
+        return get(evidenceId, false, user);
     }
 
     public EvidenceResponse approveDisposal(String evidenceId, DisposalDecisionBody body, AuthenticatedUser user) {
         ledger.approveDisposal(evidenceId, body.expectedVersion(), body.note(), actor(user));
-        return get(evidenceId, false);
+        return get(evidenceId, false, user);
     }
 
     public EvidenceResponse rejectDisposal(String evidenceId, DisposalDecisionBody body, AuthenticatedUser user) {
         ledger.rejectDisposal(evidenceId, body.expectedVersion(), body.note(), actor(user));
-        return get(evidenceId, false);
+        return get(evidenceId, false, user);
     }
 
     // ----------------------------------------------------------------------------------------- shared
@@ -347,27 +405,69 @@ public class EvidenceService {
         return name.length() > 200 ? name.substring(0, 200) : name;
     }
 
-    private MetadataResult readMetadata(String cid) {
+    /**
+     * F2 (design section 6): the metadata document is now ciphertext, so displaying it needs the CALLER's own
+     * ECK. No wrapped key for this (evidenceId, userId) means "not available to you" - the same degrade-not-fail
+     * outcome F1 already used for a storage problem (a missing/unreadable document); this project does not
+     * distinguish "genuinely gone" from "not authorised to read" in {@code EvidenceResponse.metadataAvailable}.
+     */
+    private MetadataResult readMetadata(String evidenceId, UUID userId, String cid) {
+        Optional<byte[]> eck = contentKeys.unwrap(evidenceId, userId);
+        if (eck.isEmpty()) {
+            return MetadataResult.UNAVAILABLE;
+        }
         try {
-            byte[] bytes = ipfs.read(cid, in -> in.readNBytes(MAX_METADATA_BYTES + 1));
-            if (bytes.length > MAX_METADATA_BYTES) {
+            byte[] ciphertext = ipfs.read(cid, in -> in.readNBytes(MAX_METADATA_BYTES + AesGcmCodec.OVERHEAD_BYTES + 1));
+            if (ciphertext.length > MAX_METADATA_BYTES + AesGcmCodec.OVERHEAD_BYTES) {
                 return MetadataResult.UNAVAILABLE;
             }
-            return new MetadataResult(json.readValue(bytes, EvidenceMetadata.class), true);
-        } catch (ContentNotFoundException | StorageUnavailableException | JacksonException e) {
+            byte[] plaintext = AesGcmCodec.decrypt(eck.get(), ciphertext);
+            return new MetadataResult(json.readValue(plaintext, EvidenceMetadata.class), true);
+        } catch (ContentNotFoundException | StorageUnavailableException | JacksonException | IllegalArgumentException e) {
             // F1: a storage problem must not hide the ledger information, so degrade instead of failing.
             log.warn("Metadata {} unavailable: {}", cid, e.getClass().getSimpleName());
             return MetadataResult.UNAVAILABLE;
         }
     }
 
-    private EvidenceResponse toResponse(LedgerEvidenceRecord r, VerificationResponse verificationResult) {
-        MetadataResult meta = readMetadata(r.metadataCid());
+    private EvidenceResponse toResponse(LedgerEvidenceRecord r, VerificationResponse verificationResult, AuthenticatedUser user) {
+        MetadataResult meta = readMetadata(r.evidenceId(), user.userId(), r.metadataCid());
         var d = r.disposal();
         return new EvidenceResponse(r.evidenceId(), r.caseId(), r.evidenceType(), r.status(), r.version(),
                 r.currentCustodian(), r.metadataCid(), r.metadataSha256(), r.fileCid(), r.fileSha256(), r.fileSize(),
                 r.createdBy(), r.createdAt(), r.updatedBy(), r.updatedAt(), r.lastAction().name(), r.lastReason(),
                 new EvidenceResponse.Disposal(d.state().name(), d.requestedBy(), d.requestedAt(), d.reason()),
                 meta.available(), meta.metadata(), verificationResult);
+    }
+
+    // -------------------------------------------------------------------------------------- F2 Q3, download
+
+    /**
+     * Streams the decrypted file to an authorised caller. {@code onDescriptor} is invoked once, with the
+     * plaintext name/type/size decrypted from the metadata document, BEFORE any body bytes are written to
+     * {@code out} - so the controller can set HTTP headers first. Reuses {@link #readVerifiedMetadata}, which
+     * gives file download the same ledger-hash integrity check {@code update()} already relies on, for free.
+     */
+    public void streamFile(String evidenceId, AuthenticatedUser user, Consumer<FileDescriptor> onDescriptor, OutputStream out) {
+        LedgerEvidenceRecord record = load(evidenceId);
+        if (record.fileCid() == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NO_FILE",
+                    "Evidence " + evidenceId + " has no file (PHYSICAL evidence)");
+        }
+        byte[] eck = contentKeys.unwrap(evidenceId, user.userId()).orElseThrow(() ->
+                new ApiException(HttpStatus.FORBIDDEN, "KEY_NOT_AUTHORISED",
+                        "You are not authorised to decrypt evidence " + evidenceId));
+        EvidenceMetadata.FileInfo info = readVerifiedMetadata(record, eck).file();
+        if (info == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NO_FILE",
+                    "Evidence " + evidenceId + " has no file (PHYSICAL evidence)");
+        }
+        onDescriptor.accept(new FileDescriptor(info.originalName(), info.contentType(), info.size()));
+        ipfs.<Void>read(record.fileCid(), in -> {
+            try (InputStream decrypted = AesGcmCodec.decryptingStream(eck, in)) {
+                decrypted.transferTo(out);
+            }
+            return null;
+        });
     }
 }

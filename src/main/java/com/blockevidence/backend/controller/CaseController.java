@@ -61,8 +61,8 @@ public class CaseController {
     /** E3: the full evidence records linked to this case (CaseResponse.evidenceIds has just the ids). */
     @GetMapping("/{id}/evidence")
     @PreAuthorize(Permissions.READ_EVIDENCE)
-    public List<EvidenceResponse> evidence(@PathVariable UUID id) {
-        return caseService.evidence(id);
+    public List<EvidenceResponse> evidence(@PathVariable UUID id, @AuthenticationPrincipal AuthenticatedUser user) {
+        return caseService.evidence(id, user);
     }
 
     @PutMapping("/{id}")

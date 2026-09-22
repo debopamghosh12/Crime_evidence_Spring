@@ -3,6 +3,7 @@ package com.blockevidence.backend.config;
 import java.time.Clock;
 import java.util.Locale;
 
+import com.blockevidence.backend.crypto.UserKeyService;
 import com.blockevidence.backend.model.User;
 import com.blockevidence.backend.repository.UserRepository;
 import com.blockevidence.backend.security.Role;
@@ -23,6 +24,10 @@ import org.springframework.stereotype.Component;
  * <p>Runs only under the {@code dev} profile, and the password comes from the environment
  * (constraint C-07). If BLOCKEVIDENCE_DEV_SEED_PASSWORD is unset it seeds nothing rather than
  * invent a password. Idempotent: existing users are left untouched.
+ *
+ * <p>F2/F3: every seeded user also gets an RSA keypair provisioned ({@link UserKeyService#provision}, itself
+ * idempotent) - not just newly-created ones, so a user seeded before F2/F3 existed gets one backfilled the next
+ * time this runs, rather than being permanently unable to receive a wrapped content key.
  */
 @Component
 @Profile("dev")
@@ -32,13 +37,15 @@ public class DevUserSeeder implements ApplicationRunner {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final UserKeyService userKeys;
     private final Clock clock;
     private final String seedPassword;
 
-    public DevUserSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder, Clock clock,
-            @Value("${blockevidence.dev-seed.password:}") String seedPassword) {
+    public DevUserSeeder(UserRepository userRepository, PasswordEncoder passwordEncoder, UserKeyService userKeys,
+            Clock clock, @Value("${blockevidence.dev-seed.password:}") String seedPassword) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.userKeys = userKeys;
         this.clock = clock;
         this.seedPassword = seedPassword;
     }
@@ -52,10 +59,12 @@ public class DevUserSeeder implements ApplicationRunner {
         String hash = passwordEncoder.encode(seedPassword);
         for (Role role : Role.values()) {
             String email = role.name().toLowerCase(Locale.ROOT).replace('_', '-') + "@blockevidence.local";
-            if (!userRepository.existsByEmailIgnoreCase(email)) {
-                userRepository.save(new User(email, hash, "Dev " + role.name(), "Development", role, clock.instant()));
+            User user = userRepository.findByEmailIgnoreCase(email).orElse(null);
+            if (user == null) {
+                user = userRepository.save(new User(email, hash, "Dev " + role.name(), "Development", role, clock.instant()));
                 log.info("Seeded dev user {}", email);
             }
+            userKeys.provision(user.getId());
         }
     }
 }

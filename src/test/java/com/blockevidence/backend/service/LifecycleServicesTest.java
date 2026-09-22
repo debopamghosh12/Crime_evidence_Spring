@@ -2,6 +2,7 @@ package com.blockevidence.backend.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -35,6 +36,7 @@ import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.repository.UserRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Role;
+import com.blockevidence.backend.support.FakeContentKeys;
 import com.blockevidence.backend.support.FakeIpfsClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -51,7 +53,27 @@ class LifecycleServicesTest {
     final UserRepository users = mock(UserRepository.class);
     final CaseFileRepository cases = mock(CaseFileRepository.class);
     final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
+    final com.blockevidence.backend.repository.CaseMemberRepository caseMembers =
+            mock(com.blockevidence.backend.repository.CaseMemberRepository.class);
     final com.blockevidence.backend.notification.NotificationService notifications = mock(com.blockevidence.backend.notification.NotificationService.class);
+    // F2/F3: a REAL content-key service - this file's assertions never touch EvidenceResponse.metadata(), so no
+    // case-membership wiring is needed (a non-registrant actor simply sees metadataAvailable=false, degrade not
+    // fail, exactly like an IPFS outage - see EvidenceServiceTest for the file that DOES test metadata content).
+    final com.blockevidence.backend.crypto.UserKeyService userKeys = FakeContentKeys.userKeyService(clock);
+    final com.blockevidence.backend.crypto.ContentKeyService contentKeys = FakeContentKeys.contentKeyService(userKeys, clock);
+
+    AuthenticatedUser user(Role role) {
+        AuthenticatedUser u = new AuthenticatedUser(UUID.randomUUID(), role.name().toLowerCase() + "@example.org", role);
+        userKeys.provision(u.userId());
+        return u;
+    }
+
+    final AuthenticatedUser collector = user(Role.COLLECTOR);
+    final AuthenticatedUser analyst = user(Role.FORENSIC_ANALYST);
+    final AuthenticatedUser prosecutor = user(Role.PROSECUTOR);
+    final AuthenticatedUser judge = user(Role.JUDGE);
+    final AuthenticatedUser auditor = user(Role.AUDITOR);
+
     final EvidenceService evidence = buildEvidenceService();
     final StatusService status = new StatusService(ledger, evidence);
     final CustodyService custody = new CustodyService(ledger, users, evidence);
@@ -60,19 +82,10 @@ class LifecycleServicesTest {
         CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
         ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
         lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
+        lenient().when(caseMembers.findByCaseIdOrderByAddedAtAsc(any())).thenReturn(List.of());
         return new EvidenceService(ledger, ipfs, new VerificationService(ipfs, clock), JsonMapper.builder().build(),
-                new UploadProperties(List.of("text/plain")), cases, caseLinks, notifications, clock);
+                new UploadProperties(List.of("text/plain")), cases, caseLinks, caseMembers, notifications, contentKeys, clock);
     }
-
-    AuthenticatedUser user(Role role) {
-        return new AuthenticatedUser(UUID.randomUUID(), role.name().toLowerCase() + "@example.org", role);
-    }
-
-    final AuthenticatedUser collector = user(Role.COLLECTOR);
-    final AuthenticatedUser analyst = user(Role.FORENSIC_ANALYST);
-    final AuthenticatedUser prosecutor = user(Role.PROSECUTOR);
-    final AuthenticatedUser judge = user(Role.JUDGE);
-    final AuthenticatedUser auditor = user(Role.AUDITOR);
 
     /** Makes the repository know a user (as the receiver lookup needs). */
     User known(AuthenticatedUser a, boolean enabled) {

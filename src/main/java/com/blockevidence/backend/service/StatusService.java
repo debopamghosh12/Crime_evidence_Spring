@@ -46,6 +46,6 @@ public class StatusService {
         }
         ledger.updateStatus(evidenceId, request.expectedVersion(), request.status(), request.reason(),
                 new LedgerActor(user.userId().toString(), user.role()));
-        return evidenceService.get(evidenceId, false);
+        return evidenceService.get(evidenceId, false, user);
     }
 }

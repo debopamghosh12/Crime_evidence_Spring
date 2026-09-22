@@ -458,3 +458,52 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
   counts, H3's ordered feed, H4 notifications for the transfer receiver and every case member plus a live tamper
   alert (a corrupted IPFS block, `verify=true` -> TAMPERED -> notification), and A6's full set including the
   specific deactivation-visibility demonstration the owner required.
+
+## 18. As built (Phase 5, F2/F3): envelope encryption and key management, 2026-09-22
+
+Full design: `docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md` (owner-approved before any code was written). F4's audit
+(`docs/features/f4-personal-data-off-chain-audit.md`) established the exposure F2 closes: not the ledger (already
+clean), IPFS file/metadata *content*.
+
+- **New `crypto/` package**: `AesGcmCodec` (stateless AES-256-GCM, byte[] and streaming forms, `IV || ciphertext ||
+  tag` wire format), `MasterKey` (decodes and length-validates `EncryptionProperties.masterKey` at startup - the
+  app refuses to start on a bad value, same as the JWT secret), `UserKeyPair`/`UserKeyPairRepository` (one RSA-2048
+  keypair per user; the private key is PKCS8 DER encrypted under the master key), `UserKeyService` (provision/
+  publicKey/privateKey), `EvidenceContentKey`/`EvidenceContentKeyRepository` (one RSA-OAEP-SHA256-wrapped copy of
+  an evidence item's AES-256 content key, ECK, per authorised user), `ContentKeyService` (generate/wrap/re-wrap/
+  revoke/unwrap - see the design doc section 5 for exactly how re-wrap recovers the ECK via any existing holder's
+  key, without ever persisting the raw ECK).
+- **`config/EncryptionProperties`**: one new env var, `BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY` (base64 AES-256, no
+  default - C-07). **CONSTRAINTS.md C-10** names the resulting trust boundary explicitly (owner-approved
+  alongside the design).
+- **`EvidenceService` changes**: `register()` generates the ECK, encrypts the file (streamed, chained onto the
+  existing `HashingInputStream`/C1 machinery - the hash pinned and recorded on the ledger is now of the
+  CIPHERTEXT, not the plaintext) and every metadata version, and wraps the ECK for the registrant (mandatory,
+  inside the pre-ledger try/compensate block) and every current case member (best-effort). `update()` unwraps the
+  ECK via the ACTING user's own wrapped copy before it can write a new metadata version - a user with none gets a
+  new 403 `KEY_NOT_AUTHORISED` (a real, flagged behaviour change: today ANY role can update ANY evidence item, A5
+  gap). `get()`/`getVersion()`/`findByCid()` now take the caller and decrypt metadata for display with THEIR
+  wrapped key, degrading to `metadataAvailable=false` (not an error) if they have none - the same shape as an
+  IPFS-outage degrade. **`VerificationService`/`verify()` needed NO changes at all** - it already just re-fetches
+  and re-hashes whatever bytes are at a CID, and those bytes are now ciphertext, so tamper-evidence keeps working
+  for any caller, authorised or not.
+- **New endpoint** `GET /api/evidence/{id}/file` (F2 Q3, owner-approved as new scope): streams the decrypted file
+  to an authorised caller only (403 `KEY_NOT_AUTHORISED` otherwise); without it F2 would encrypt files into
+  content nobody could ever legitimately retrieve again.
+- **`CaseService` changes**: `addMember` re-wraps the ECK of every evidence item already linked to the case for
+  the new member (F3's "re-wrap on access change"); `removeMember` deletes their wrapped copy for each one
+  (revoke - not retroactive, a stated limit). `sync.EventProcessor` re-wraps for a custody transfer's receiver the
+  moment `TRANSFER_INITIATED` is processed (F2/F3 Q2, owner-approved), the same async timing as H4's notification.
+- **`DevUserSeeder`** provisions a keypair for every seeded user (new AND pre-existing, since `UserKeyService.
+  provision` is idempotent) - the only user-creation path until A4 exists.
+- **Flyway `V6__envelope_encryption.sql`**: `user_keys`, `evidence_content_keys`.
+- **Verified live** (docs/TEST_CHECKLIST.md P5-F2F3): register -> IPFS holds ciphertext (88 bytes for a 60-byte
+  upload, exactly the 28-byte IV+tag overhead) whose hash matches the ledger; the registrant decrypts, a
+  non-member cannot (`metadataAvailable=false`, `/file` -> 403); adding the non-member as a case member grants
+  them access live (`metadataAvailable` flips to `true`, `/file` now returns the exact original bytes);
+  removing them revokes it again; a corrupted ciphertext byte on the real IPFS block still produces TAMPERED
+  from `verify()`, which never touched a content key. **Run against the `memory-ledger` reference ledger, not
+  real Fabric** - the operator-held Fabric CA registrar credential needed to rebuild the per-user wallet (A2) was
+  lost between sessions and reissuing it was refused by this session's own permission policy (a secret-store
+  write); real-Fabric confirmation of register/custody-transfer is a followup once the registrar is restored
+  (see HANDOVER). Real Postgres and real IPFS were used throughout; only the ledger is the stand-in.

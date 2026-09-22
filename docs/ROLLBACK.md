@@ -1,5 +1,43 @@
 # Rollback
 
+## F2/F3 envelope encryption + key management, written 2026-09-22 BEFORE building it
+
+**Revert target:** git tag `phase5-ready` (commit `92df666`, pushed to origin). Everything below is
+uncommitted until the owner reviews it live; roll back with `git stash -u` (keeps a copy) or
+`git reset --hard phase5-ready && git clean -fd`.
+
+**What this stage adds:** Flyway `V6__envelope_encryption.sql` (`user_keys`, `evidence_content_keys` - new
+tables, no existing table altered); new `crypto/` (or similarly named) package (`ContentKeyService`,
+`UserKeyService`, wrap/unwrap helpers); `EncryptionProperties` (+1 new env var,
+`BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY`); edits to `EvidenceService` (register/update gain
+encrypt/decrypt/unwrap steps, `update` gains a new 403 `KEY_NOT_AUTHORISED` path), `CaseService`
+(`addMember`/`removeMember` gain re-wrap/revoke calls), `DevUserSeeder` (provisions a keypair per seeded
+user), a new `GET /api/evidence/{id}/file` endpoint + controller method. **`VerificationService` is NOT
+changed** (section 7 of the design: it already hashes whatever bytes it fetches, and those bytes are now
+ciphertext - no code there needs to know encryption exists).
+
+**Non-git side effects:**
+- **Postgres:** Flyway V6 creates `user_keys`, `evidence_content_keys`. Undo:
+  `docker exec be-postgres psql ... -c "drop table evidence_content_keys, user_keys; delete from flyway_schema_history where version='6'"`.
+- **IPFS:** every file/metadata document pinned during live verification from this point on is CIPHERTEXT
+  (`IV || AES-256-GCM(...)`), not the plaintext earlier phases pinned - reading an old CID from before this
+  stage still returns plaintext (unaffected; ECK-encryption only applies going forward, existing evidence is
+  never retroactively re-encrypted, matching the project's "never touch existing ledger/IPFS content" stance).
+- **Ledger:** `fileSha256`/`metadataSha256` recorded on the ledger for any evidence registered during/after
+  this stage's live verification are ciphertext hashes, not plaintext hashes - permanent, like all ledger
+  writes; a rollback of the CODE does not change what is already on the chain.
+- **No new container, no new external service** - the master key is a config value only
+  (`BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY`), never written to disk by the app itself.
+
+**Pre-condition checked before building:** CONSTRAINTS.md C-10 added and approved by the owner (the
+master-key single-point-of-compromise trade-off is accepted going in, not discovered after).
+
+**Re-check after rollback:** `git describe --tags` shows `phase5-ready`; `./mvnw test` reports the pre-F2/F3
+count passing; `GET /api/evidence/{id}` for evidence registered before this stage still round-trips and
+verifies exactly as before (plaintext, unaffected).
+
+---
+
 ## A2 chaincode cutover (evidence v1.3), written 2026-09-22 BEFORE deploying it
 
 **This is the risky edit CLAUDE.md asks for a rollback note before, not after.** Deploying `evidence` v1.3 makes the

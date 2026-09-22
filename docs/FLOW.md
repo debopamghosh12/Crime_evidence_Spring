@@ -280,5 +280,46 @@ A request refused before/inside MVC:
     GlobalExceptionHandler.handleAuthenticationFailed (401, bad login) -> AuditService.recordDenied(AUTH_FAILED, ...)
     GlobalExceptionHandler.handleAccessDenied (403, @PreAuthorize)     -> AuditService.recordDenied(ACCESS_DENIED, ...)
 
+## 21. Envelope encryption (F2/F3) - currently being modified: register()/update()/get() paths above
+
+```
+POST /api/evidence (register), DIGITAL -> EvidenceController.register -> EvidenceService.register
+    contentKeys.newKey()                                    -> a fresh random AES-256 ECK, in memory only
+    storeFile: file bytes -> HashingInputStream(plaintext, counted only)
+                           -> AesGcmCodec.encryptingStream(eck, ...)   (fresh random IV)
+                           -> HashingInputStream(ciphertext, HASHED - this hash goes on the ledger)
+                           -> ipfs.pin(...)
+    storeMetadata: json bytes -> AesGcmCodec.encrypt(eck, ...) -> ipfs.pin(ciphertext)
+    contentKeys.wrapForRegistrant(evidenceId, registrant, eck)          MANDATORY, pre-ledger, same try/compensate
+    for each other current case member: contentKeys.wrapBestEffort(...)  best-effort, still pre-ledger
+    ledger.createEvidence(...)    (fileSha256/metadataSha256 recorded ARE the ciphertext hashes)
+
+GET /api/evidence/{id} -> EvidenceController.get(id, verify, user) -> EvidenceService.get(..., user)
+    -> toResponse -> readMetadata(evidenceId, user.userId(), metadataCid)
+        contentKeys.unwrap(evidenceId, userId) empty?  -> MetadataResult.UNAVAILABLE (metadataAvailable=false)
+        present -> ipfs.read (ciphertext) -> AesGcmCodec.decrypt(eck, ciphertext) -> json parse -> shown
+
+PUT /api/evidence/{id} (update) -> EvidenceService.update
+    contentKeys.unwrap(evidenceId, actingUser) empty? -> 403 KEY_NOT_AUTHORISED (new: needs the key, not just RBAC)
+    present -> readVerifiedMetadata (hash-check the ciphertext against the ledger FIRST, unchanged shape, THEN
+               AesGcmCodec.decrypt) -> build next version -> storeMetadata(next, pinned, eck) -> ledger.updateEvidence
+
+GET /api/evidence/{id}/file (new, F2 Q3) -> EvidenceService.streamFile
+    contentKeys.unwrap(evidenceId, user) empty? -> 403 KEY_NOT_AUTHORISED
+    present -> readVerifiedMetadata for the FileInfo (name/type/size) -> onDescriptor callback sets HTTP headers
+            -> ipfs.read(fileCid) -> AesGcmCodec.decryptingStream(eck, ciphertext) -> streamed to the response
+
+verify() / VerificationService.check -> UNCHANGED: re-fetch bytes at a CID, hash them, compare to the ledger.
+    Never calls contentKeys - proves integrity for ANY caller, authorised or not (design section 7).
+
+CaseService.addMember -> members.save(...) -> for each evidence item linked to the case:
+    contentKeys.reWrapForNewUser(evidenceId, newUserId)   (F3 re-wrap: recovers the ECK via any existing holder)
+CaseService.removeMember -> members.delete(...) -> for each evidence item linked to the case:
+    contentKeys.revoke(evidenceId, userId)                (F3 revoke: deletes their wrapped row, not retroactive)
+
+sync.EventProcessor.apply, TRANSFER_INITIATED -> wrapForTransferReceiver
+    contentKeys.reWrapForNewUser(evidenceId, transfer.to())   (F2/F3 Q2: same mechanism as addMember)
+```
+
 GET /api/audit -> AuditController -> AuditLogRepository (Specification: userId/action/from/to), ADMIN/AUDITOR only
 ```

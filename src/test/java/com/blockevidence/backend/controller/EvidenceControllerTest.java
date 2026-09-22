@@ -253,7 +253,7 @@ class EvidenceControllerTest {
 
     @Test
     void ledgerAndStorageFailuresRenderWithTheirOwnStatusAndCode() throws Exception {
-        when(evidenceService.get(eq(ID), eq(false)))
+        when(evidenceService.get(eq(ID), eq(false), any(AuthenticatedUser.class)))
                 .thenThrow(new LedgerException(LedgerErrorCode.VERSION_CONFLICT, "Expected version 1 but at 2"));
         mvc.perform(get("/api/evidence/" + ID).header("Authorization", bearer(Role.ADMIN)))
                 .andExpect(status().isConflict())

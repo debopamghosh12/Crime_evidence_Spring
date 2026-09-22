@@ -1,5 +1,6 @@
 package com.blockevidence.backend.controller;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 
@@ -19,6 +20,7 @@ import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Permissions;
 import com.blockevidence.backend.service.EvidenceService;
 import com.blockevidence.backend.service.SearchService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -91,22 +93,24 @@ public class EvidenceController {
      */
     @GetMapping("/" + ID)
     @PreAuthorize(Permissions.READ_EVIDENCE)
-    public EvidenceResponse get(@PathVariable String id, @RequestParam(defaultValue = "false") boolean verify) {
-        EvidenceResponse response = evidenceService.get(id, verify);
+    public EvidenceResponse get(@PathVariable String id, @RequestParam(defaultValue = "false") boolean verify,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        EvidenceResponse response = evidenceService.get(id, verify, user);
         audit.recordAccess(id, verify);
         return response;
     }
 
     @GetMapping("/by-cid/{cid}")
     @PreAuthorize(Permissions.READ_EVIDENCE)
-    public List<EvidenceResponse> byCid(@PathVariable String cid) {
-        return evidenceService.findByCid(cid);
+    public List<EvidenceResponse> byCid(@PathVariable String cid, @AuthenticationPrincipal AuthenticatedUser user) {
+        return evidenceService.findByCid(cid, user);
     }
 
     @GetMapping("/" + ID + "/versions/{version}")
     @PreAuthorize(Permissions.READ_EVIDENCE)
-    public EvidenceResponse version(@PathVariable String id, @PathVariable int version) {
-        return evidenceService.getVersion(id, version);
+    public EvidenceResponse version(@PathVariable String id, @PathVariable int version,
+            @AuthenticationPrincipal AuthenticatedUser user) {
+        return evidenceService.getVersion(id, version, user);
     }
 
     @GetMapping("/" + ID + "/history")
@@ -122,6 +126,24 @@ public class EvidenceController {
         VerificationResponse response = evidenceService.verify(id);
         audit.recordAccess(id, true);
         return response;
+    }
+
+    /**
+     * F2 Q3: decrypts and streams the file to an authorised caller only - 403 KEY_NOT_AUTHORISED if the caller
+     * has no wrapped content key for this item (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md section 6). Always a
+     * DOWNLOAD (A6): the actual bytes are fetched and decrypted, not just ledger/metadata fields.
+     */
+    @GetMapping("/" + ID + "/file")
+    @PreAuthorize(Permissions.READ_EVIDENCE)
+    public void file(@PathVariable String id, @AuthenticationPrincipal AuthenticatedUser user,
+            HttpServletResponse response) throws IOException {
+        evidenceService.streamFile(id, user, descriptor -> {
+            response.setContentType(descriptor.contentType() != null ? descriptor.contentType()
+                    : MediaType.APPLICATION_OCTET_STREAM_VALUE);
+            response.setHeader("Content-Disposition",
+                    "attachment; filename=\"" + descriptor.fileName().replace("\"", "'") + "\"");
+        }, response.getOutputStream());
+        audit.recordAccess(id, true);
     }
 
     @PutMapping("/" + ID)

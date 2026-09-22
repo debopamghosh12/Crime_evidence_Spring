@@ -37,6 +37,7 @@ import com.blockevidence.backend.repository.CaseFileRepository;
 import com.blockevidence.backend.security.AuthenticatedUser;
 import com.blockevidence.backend.security.Role;
 import com.blockevidence.backend.storage.StorageUnavailableException;
+import com.blockevidence.backend.support.FakeContentKeys;
 import com.blockevidence.backend.support.FakeIpfsClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -61,25 +62,46 @@ class EvidenceServiceTest {
     final UploadProperties upload = new UploadProperties(List.of("text/plain", "image/png"));
     final CaseFileRepository cases = mock(CaseFileRepository.class);
     final CaseEvidenceLinkRepository caseLinks = mock(CaseEvidenceLinkRepository.class);
+    final com.blockevidence.backend.repository.CaseMemberRepository caseMembers =
+            mock(com.blockevidence.backend.repository.CaseMemberRepository.class);
     final com.blockevidence.backend.notification.NotificationService notifications = mock(com.blockevidence.backend.notification.NotificationService.class);
-    final EvidenceService service = build(ledger);
-
-    EvidenceService build(LedgerService l) {
-        CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
-        ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
-        lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
-        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload, cases, caseLinks,
-                notifications, clock);
-    }
+    // F2/F3: a REAL content-key service (real RSA/AES), so register()/get()/update() actually encrypt and
+    // decrypt - see FakeContentKeys. Declared before the test users so user() below can provision each one.
+    final com.blockevidence.backend.crypto.UserKeyService userKeys = FakeContentKeys.userKeyService(clock);
+    final com.blockevidence.backend.crypto.ContentKeyService contentKeys = FakeContentKeys.contentKeyService(userKeys, clock);
 
     AuthenticatedUser user(Role role) {
-        return new AuthenticatedUser(UUID.randomUUID(), role.name().toLowerCase() + "@example.org", role);
+        AuthenticatedUser u = new AuthenticatedUser(UUID.randomUUID(), role.name().toLowerCase() + "@example.org", role);
+        userKeys.provision(u.userId());
+        return u;
     }
 
     final AuthenticatedUser collector = user(Role.COLLECTOR);
     final AuthenticatedUser analyst = user(Role.FORENSIC_ANALYST);
     final AuthenticatedUser prosecutor = user(Role.PROSECUTOR);
     final AuthenticatedUser judge = user(Role.JUDGE);
+
+    // Built after the users above so it can wire them all as members of the fixed test case (F2 design
+    // section 5: register() wraps the content key for every current case member, not just the registrant).
+    final EvidenceService service = build(ledger);
+
+    EvidenceService build(LedgerService l) {
+        CaseFile existingCase = new CaseFile("ANY-CASE", "t", null, UUID.randomUUID(), UUID.randomUUID(), clock.instant());
+        ReflectionTestUtils.setField(existingCase, "id", UUID.randomUUID());
+        lenient().when(cases.findByCaseNumberIgnoreCase(anyString())).thenReturn(Optional.of(existingCase));
+        java.util.List<com.blockevidence.backend.model.CaseMember> members = List.of(
+                new com.blockevidence.backend.model.CaseMember(existingCase.getId(), collector.userId(),
+                        com.blockevidence.backend.domain.CaseRole.INVESTIGATOR, collector.userId(), clock.instant()),
+                new com.blockevidence.backend.model.CaseMember(existingCase.getId(), analyst.userId(),
+                        com.blockevidence.backend.domain.CaseRole.FORENSIC_ANALYST, collector.userId(), clock.instant()),
+                new com.blockevidence.backend.model.CaseMember(existingCase.getId(), prosecutor.userId(),
+                        com.blockevidence.backend.domain.CaseRole.PROSECUTOR, collector.userId(), clock.instant()),
+                new com.blockevidence.backend.model.CaseMember(existingCase.getId(), judge.userId(),
+                        com.blockevidence.backend.domain.CaseRole.OBSERVER, collector.userId(), clock.instant()));
+        lenient().when(caseMembers.findByCaseIdOrderByAddedAtAsc(existingCase.getId())).thenReturn(members);
+        return new EvidenceService(l, ipfs, new VerificationService(ipfs, clock), json, upload, cases, caseLinks,
+                caseMembers, notifications, contentKeys, clock);
+    }
 
     static final byte[] CONTENT = "the seized phone image, byte for byte".getBytes(StandardCharsets.UTF_8);
 
@@ -104,10 +126,18 @@ class EvidenceServiceTest {
         assertThat(r.evidenceId()).matches("EV-[0-9a-f-]{36}");            // server-generated
         assertThat(r.status()).isEqualTo(EvidenceStatus.COLLECTED);
         assertThat(r.version()).isEqualTo(1);
-        // C1: the ledger hash equals an independent SHA-256 of the uploaded bytes.
-        assertThat(r.fileSha256()).isEqualTo(Sha256.hex(CONTENT));
-        assertThat(r.fileSize()).isEqualTo(CONTENT.length);
-        assertThat(ipfs.store.get(r.fileCid())).isEqualTo(CONTENT);
+        // F2: the ledger hash is now of the CIPHERTEXT actually pinned, not the plaintext (design section 7) -
+        // C1's "an independent hash of what was uploaded" property still holds, just one layer further out.
+        byte[] storedFileBytes = ipfs.store.get(r.fileCid());
+        assertThat(r.fileSha256()).isEqualTo(Sha256.hex(storedFileBytes));
+        assertThat(r.fileSize()).as("the reported size is the PLAINTEXT length, not the longer ciphertext blob")
+                .isEqualTo(CONTENT.length);
+        assertThat(storedFileBytes).as("F2: the file is stored ENCRYPTED, not as plaintext").isNotEqualTo(CONTENT);
+        assertThat(storedFileBytes.length).isEqualTo(CONTENT.length + com.blockevidence.backend.crypto.AesGcmCodec.OVERHEAD_BYTES);
+        byte[] eck = contentKeys.unwrap(r.evidenceId(), collector.userId()).orElseThrow();
+        assertThat(com.blockevidence.backend.crypto.AesGcmCodec.decrypt(eck, storedFileBytes))
+                .as("F2: an authorised user's unwrapped key decrypts it back to the exact original bytes")
+                .isEqualTo(CONTENT);
         assertThat(r.metadataSha256()).isEqualTo(Sha256.hex(ipfs.store.get(r.metadataCid())));
         assertThat(r.metadataAvailable()).isTrue();
         assertThat(r.metadata().description()).isEqualTo("Phone image");
@@ -249,7 +279,10 @@ class EvidenceServiceTest {
 
         assertThat(v.status()).isEqualTo(VerificationStatus.TAMPERED);
         assertThat(v.file().result()).isEqualTo(VerificationStatus.TAMPERED);
-        assertThat(v.file().expectedSha256()).isEqualTo(Sha256.hex(CONTENT));
+        // F2: the ledger's expected hash is of the CIPHERTEXT that was originally stored, not Sha256.hex(CONTENT)
+        // (design section 7) - r.fileSha256() is that same ledger value, already asserted equal to the stored
+        // ciphertext's hash in registerDigitalStoresFileAndMetadataInIpfsAndTheirHashesOnTheLedger above.
+        assertThat(v.file().expectedSha256()).isEqualTo(r.fileSha256());
         assertThat(v.file().actualSha256()).isEqualTo(Sha256.hex(corrupted)).isNotEqualTo(v.file().expectedSha256());
         assertThat(v.metadata().result()).as("only the file was touched").isEqualTo(VerificationStatus.VERIFIED);
     }
@@ -308,8 +341,8 @@ class EvidenceServiceTest {
         EvidenceResponse r = registerDigital();
         ipfs.corrupt(r.fileCid(), "other".getBytes(StandardCharsets.UTF_8));
 
-        assertThat(service.get(r.evidenceId(), false).verification().status()).isEqualTo(VerificationStatus.NOT_CHECKED);
-        assertThat(service.get(r.evidenceId(), true).verification().status()).isEqualTo(VerificationStatus.TAMPERED);
+        assertThat(service.get(r.evidenceId(), false, collector).verification().status()).isEqualTo(VerificationStatus.NOT_CHECKED);
+        assertThat(service.get(r.evidenceId(), true, collector).verification().status()).isEqualTo(VerificationStatus.TAMPERED);
     }
 
     @Test
@@ -317,7 +350,7 @@ class EvidenceServiceTest {
         EvidenceResponse r = registerDigital();
         ipfs.down = true;
 
-        EvidenceResponse degraded = service.get(r.evidenceId(), false);
+        EvidenceResponse degraded = service.get(r.evidenceId(), false, collector);
 
         assertThat(degraded.metadataAvailable()).isFalse();
         assertThat(degraded.metadata()).isNull();
@@ -329,11 +362,11 @@ class EvidenceServiceTest {
     void lookupByCidFindsTheEvidenceViaFileOrMetadataCid() {
         EvidenceResponse r = registerDigital();
 
-        assertThat(service.findByCid(r.fileCid())).extracting(EvidenceResponse::evidenceId).containsExactly(r.evidenceId());
-        assertThat(service.findByCid(r.metadataCid())).extracting(EvidenceResponse::evidenceId).containsExactly(r.evidenceId());
-        assertThatThrownBy(() -> service.findByCid(FakeIpfsClient.cidOf("nothing".getBytes())))
+        assertThat(service.findByCid(r.fileCid(), collector)).extracting(EvidenceResponse::evidenceId).containsExactly(r.evidenceId());
+        assertThat(service.findByCid(r.metadataCid(), collector)).extracting(EvidenceResponse::evidenceId).containsExactly(r.evidenceId());
+        assertThatThrownBy(() -> service.findByCid(FakeIpfsClient.cidOf("nothing".getBytes()), collector))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
-        assertThatThrownBy(() -> service.findByCid("not-a-cid"))
+        assertThatThrownBy(() -> service.findByCid("not-a-cid", collector))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("INVALID_CID"));
     }
 
@@ -355,11 +388,11 @@ class EvidenceServiceTest {
         assertThat(v2.fileCid()).isEqualTo(v1.fileCid());                     // file is immutable
         assertThat(v2.fileSha256()).isEqualTo(v1.fileSha256());
 
-        EvidenceResponse old = service.getVersion(v1.evidenceId(), 1);
+        EvidenceResponse old = service.getVersion(v1.evidenceId(), 1, collector);
         assertThat(old.version()).isEqualTo(1);
         assertThat(old.metadata().location()).as("nothing was overwritten").isEqualTo("Locker 4");
-        assertThat(service.getVersion(v1.evidenceId(), 2).metadata().location()).isEqualTo("Locker 7");
-        assertThatThrownBy(() -> service.getVersion(v1.evidenceId(), 3))
+        assertThat(service.getVersion(v1.evidenceId(), 2, collector).metadata().location()).isEqualTo("Locker 7");
+        assertThatThrownBy(() -> service.getVersion(v1.evidenceId(), 3, collector))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
         assertThat(ipfs.store).as("the old metadata document still exists in IPFS").containsKey(v1.metadataCid());
     }
@@ -387,7 +420,7 @@ class EvidenceServiceTest {
         assertThatThrownBy(() -> service.update(v1.evidenceId(),
                 new UpdateEvidenceRequest(1, "r", "x", null, null), collector))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getCode()).isEqualTo("INTEGRITY_CHECK_FAILED"));
-        assertThat(service.get(v1.evidenceId(), false).version()).as("no new version was written").isEqualTo(1);
+        assertThat(service.get(v1.evidenceId(), false, collector).version()).as("no new version was written").isEqualTo(1);
     }
 
     @Test
@@ -439,7 +472,7 @@ class EvidenceServiceTest {
         assertThat(disposed.version()).isEqualTo(3);
 
         // The record stays on the ledger, stays readable, and its content still verifies.
-        assertThat(service.get(v1.evidenceId(), true).verification().status()).isEqualTo(VerificationStatus.VERIFIED);
+        assertThat(service.get(v1.evidenceId(), true, collector).verification().status()).isEqualTo(VerificationStatus.VERIFIED);
         assertThat(service.history(v1.evidenceId())).hasSize(3);
         assertThat(ipfs.pins).as("disposal does not unpin anything").contains(v1.fileCid(), v1.metadataCid());
 

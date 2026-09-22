@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import com.blockevidence.backend.crypto.ContentKeyService;
 import com.blockevidence.backend.domain.EvidenceStatus;
 import com.blockevidence.backend.domain.EvidenceType;
 import com.blockevidence.backend.ledger.LedgerAction;
@@ -30,7 +31,9 @@ class EventProcessorTest {
     final EvidenceProjectionRepository projections = mock(EvidenceProjectionRepository.class);
     final LedgerSyncCheckpointRepository checkpoints = mock(LedgerSyncCheckpointRepository.class);
     final NotificationService notifications = mock(NotificationService.class);
-    final EventProcessor processor = new EventProcessor(activities, projections, checkpoints, notifications, clock);
+    final ContentKeyService contentKeys = mock(ContentKeyService.class);
+    final EventProcessor processor = new EventProcessor(activities, projections, checkpoints, notifications,
+            contentKeys, clock);
 
     LedgerEvidenceRecord record(int version) {
         return new LedgerEvidenceRecord("EV-1", "CASE-1", EvidenceType.PHYSICAL, EvidenceStatus.COLLECTED, version,

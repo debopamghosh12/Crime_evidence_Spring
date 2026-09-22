@@ -3,7 +3,9 @@ package com.blockevidence.backend.sync;
 import java.time.Clock;
 import java.util.UUID;
 
+import com.blockevidence.backend.crypto.ContentKeyService;
 import com.blockevidence.backend.domain.EvidenceStatus;
+import com.blockevidence.backend.ledger.LedgerAction;
 import com.blockevidence.backend.ledger.LedgerEvidenceEvent;
 import com.blockevidence.backend.ledger.LedgerEvidenceRecord;
 import com.blockevidence.backend.notification.NotificationService;
@@ -23,14 +25,17 @@ public class EventProcessor {
     private final EvidenceProjectionRepository projections;
     private final LedgerSyncCheckpointRepository checkpoints;
     private final NotificationService notifications;
+    private final ContentKeyService contentKeys;
     private final Clock clock;
 
     public EventProcessor(EvidenceActivityRepository activities, EvidenceProjectionRepository projections,
-            LedgerSyncCheckpointRepository checkpoints, NotificationService notifications, Clock clock) {
+            LedgerSyncCheckpointRepository checkpoints, NotificationService notifications, ContentKeyService contentKeys,
+            Clock clock) {
         this.activities = activities;
         this.projections = projections;
         this.checkpoints = checkpoints;
         this.notifications = notifications;
+        this.contentKeys = contentKeys;
         this.clock = clock;
     }
 
@@ -53,7 +58,25 @@ public class EventProcessor {
                 record.createdAt(), record.updatedAt(), record.lastAction().name(), record.lastReason());
         checkpoints.advance(event.blockNumber(), event.txId(), clock.instant());
         notifications.notifyForEvent(event, record); // H4; never throws, see NotificationService
+        wrapForTransferReceiver(event, record); // F3 Q2; never throws, see ContentKeyService.reWrapForNewUser
         return true;
+    }
+
+    /**
+     * F2/F3 Q2 (design section 5, owner-approved): a custody transfer's receiver is treated the same as a newly
+     * added case member - re-wrap the content key for them the moment TRANSFER_INITIATED is processed, whether
+     * or not they are (yet) a formal case member. Same async timing as H4's TRANSFER_PENDING notification: the
+     * receiver's wrapped copy exists once G3 has processed this event, not synchronously with the initiate call.
+     */
+    private void wrapForTransferReceiver(LedgerEvidenceEvent event, LedgerEvidenceRecord record) {
+        if (event.action() != LedgerAction.TRANSFER_INITIATED) {
+            return;
+        }
+        var transfer = record.transfer();
+        if (transfer == null || transfer.to() == null) {
+            return;
+        }
+        contentKeys.reWrapForNewUser(record.evidenceId(), UUID.fromString(transfer.to()));
     }
 
     private static String statusName(EvidenceStatus status) {

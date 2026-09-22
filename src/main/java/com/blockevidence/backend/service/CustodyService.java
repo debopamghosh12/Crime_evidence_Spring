@@ -55,22 +55,22 @@ public class CustodyService {
         }
         ledger.initiateTransfer(evidenceId, request.expectedVersion(), receiver.getId().toString(), receiver.getRole(),
                 request.reason(), request.notes(), actor(sender));
-        return evidenceService.get(evidenceId, false);
+        return evidenceService.get(evidenceId, false, sender);
     }
 
     public EvidenceResponse accept(String evidenceId, TransferDecisionBody body, AuthenticatedUser user) {
         ledger.acceptTransfer(evidenceId, body.expectedVersion(), body.note(), actor(user));
-        return evidenceService.get(evidenceId, false);
+        return evidenceService.get(evidenceId, false, user);
     }
 
     public EvidenceResponse reject(String evidenceId, TransferDecisionBody body, AuthenticatedUser user) {
         ledger.rejectTransfer(evidenceId, body.expectedVersion(), body.note(), actor(user));
-        return evidenceService.get(evidenceId, false);
+        return evidenceService.get(evidenceId, false, user);
     }
 
     public EvidenceResponse cancel(String evidenceId, TransferDecisionBody body, AuthenticatedUser user) {
         ledger.cancelTransfer(evidenceId, body.expectedVersion(), body.note(), actor(user));
-        return evidenceService.get(evidenceId, false);
+        return evidenceService.get(evidenceId, false, user);
     }
 
     /** D2: everything waiting for THIS user to respond. */

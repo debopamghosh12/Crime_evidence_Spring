@@ -251,3 +251,44 @@ same query from the ordinary `VIEW`/`DOWNLOAD` rows the SAME user's earlier, pre
 (TEST_CHECKLIST P4-A6). No A4 (admin user management) endpoint exists yet to deactivate a user through the API,
 so the live check used a direct SQL `UPDATE users SET enabled=false` - exactly what A4 would eventually do,
 without building A4 itself (out of scope for Phase 4).
+
+## D-058 — F4 audit: no C-06 violation found; free-text ledger fields accepted as a documented residual, not fixed (2026-09-22)
+Audited every path that writes to the ledger (chaincode structs, `LedgerActor`/`LedgerNewEvidence`, every
+`FabricLedgerService.submit` call site) against C-06. Result: every automatically-written field is an opaque
+id, hash, CID, role name, enum or timestamp - no email/fullName/department ever reaches the ledger (confirmed
+by grep, zero matches outside auth/audit code). The one thing that DOES reach the ledger as free text is the
+`reason`/`note`/`notes` fields on status change, disposal and transfer, validated for length only
+(`@Size(max=1000)`), never content - a user could type personal data into one and it would be permanent.
+Rejected: adding content-scanning/PII-redaction to these fields - well outside this project's scope, and not
+requested; these fields exist for a legitimate, required purpose (B5/D2's mandatory reason). Documented instead
+as an accepted known gap (KNOWN_GAPS.md section B, docs/features/f4-personal-data-off-chain-audit.md). This
+audit is also treated as F4's completion per the owner's framing ("verification pass, not new code, unless it
+finds a violation") - no violation was found, so no code changes accompany this entry. It doubles as the answer
+to whether F2/F3 solve a real problem: yes, but the real exposure is IPFS file/metadata CONTENT (C-09), not the
+ledger, which is clean by design.
+
+## D-059 — F2/F3 built per the approved design; live-verified against memory-ledger, not real Fabric (2026-09-22)
+Built exactly per docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md (owner-approved Q1-Q4, C-10 added first). One
+implementation choice not spelled out in the design: EvidenceService.streamFile (the new /file endpoint, Q3)
+reuses readVerifiedMetadata to learn the plaintext filename/content-type - this gives the download path the
+SAME ledger-hash integrity check update() already relies on, for free, rather than adding a second, weaker
+metadata read. Rejected: a separate "light" metadata read for just the FileInfo - would have skipped the hash
+check that catches a swapped/corrupted metadata document before ever streaming a (still-valid) file back.
+
+**Live verification used the memory-ledger profile, not real Fabric, and this needs to be closed out.** The
+operator-held Fabric CA registrar credential (be-registrar on ca_org1, A2) was needed to rebuild the per-user
+wallet (lost between sessions - the wallet directory lived outside the repo and was not persisted). Recovering
+it requires reissuing the registrar's secret (fabric-ca-client identity modify be-registrar --id.secret ... as
+the CA bootstrap admin), which this session's own permission policy classified as a secret-store write and
+refused, independent of the owner's instructions. Real Postgres and real IPFS were used throughout (docker cp
+plus cmp located the exact on-disk block backing a CID - flatfs's key is a base32 of the raw multihash, not the
+CID string, so this replaced Phase 2's old "grep for a plaintext marker" corruption technique, which cannot
+work once content is encrypted); only the ledger is a stand-in. Register/get/update's key-wrapping logic,
+addMember/removeMember's re-wrap/revoke, the download endpoint, and the tamper-detection property were all
+proven against this real Postgres+IPFS stack. Not yet proven against real Fabric: a write actually reaching the
+chaincode with a per-user identity, and the custody-transfer-receiver auto-wrap path (it is wired into
+sync.EventProcessor, which only runs against FabricLedgerService's real chaincode event stream -
+InMemoryLedgerService implements no LedgerEventSource, so G3 never runs under memory-ledger and this path could
+not be exercised live this session). Follow-up: once the registrar secret is restored (owner action, or an
+explicit approval for this session to do it), re-run scripts/fabric/enroll_users.sh and repeat the F2/F3 live
+check against the real network, specifically the transfer-receiver wrap.

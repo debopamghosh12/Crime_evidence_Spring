@@ -60,3 +60,8 @@ blockevidence:
     # never by the running app. wallet-passphrase is needed only if the wallet's keys are PKCS#8-encrypted.
     wallet-dir: ${FABRIC_WALLET_DIR:}
     wallet-passphrase: ${FABRIC_WALLET_PASSPHRASE:}
+  encryption:
+    # F2/F3, CONSTRAINTS.md C-10: no default (C-07's "refuse to start" rule) - base64 AES-256, e.g.
+    # `openssl rand -base64 32`. Protects every user's stored private key at rest; MasterKey validates the
+    # decoded length at startup.
+    master-key: ${BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY:}

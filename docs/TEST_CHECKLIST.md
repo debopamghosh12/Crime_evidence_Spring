@@ -748,6 +748,84 @@ building A4 (out of scope for Phase 4).
 `scripts/live/live_phase2.sh` exit 0; application log `ERROR` count: 0; script traceback count: 0.
 
 
+## P5-F2F3. Phase 5: envelope encryption and key management (F2, F3) — built and verified live, 2026-09-22
+
+**Read this first.** Real PostgreSQL 16 (Flyway V6 applied cleanly) and a real Kubo 0.43 node (`--offline`).
+The LEDGER is `InMemoryLedgerService` (profile `memory-ledger`), not real Fabric - see DECISIONS D-059 and
+docs/features/f2-f3-envelope-encryption-key-management.md for exactly why (a lost operator Fabric CA registrar
+credential, and this session's own permission policy refusing to reissue a CA secret). Real-chaincode writes
+and the custody-transfer-receiver auto-wrap are the one part of F2/F3 still unconfirmed live; everything else
+below is real.
+
+**Java tests (226 total, up from 208 after H1-H4/A6):**
+```
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.029 s -- in com.blockevidence.backend.crypto.AesGcmCodecTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.345 s -- in com.blockevidence.backend.crypto.ContentKeyServiceTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.359 s -- in com.blockevidence.backend.crypto.UserKeyServiceTest
+...
+Tests run: 226, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+All three new classes are tested against REAL RSA-2048/AES-256-GCM crypto (`support/FakeContentKeys`), not
+mocked - a real round trip, not an assumed one. `EvidenceServiceTest.registerDigitalStoresFileAndMetadataInIpfs...`
+was extended to assert the stored bytes are NOT the plaintext, are exactly `plaintext.length + 28` (IV+tag), and
+that unwrapping the registrant's key and decrypting recovers the exact original bytes.
+
+### Live run (verbatim, `scripts/live/verify_f2_f3.sh` - a case with collector as sole member, then an evidence
+item registered under it)
+```
+### 1. register DIGITAL evidence as collector (F2: file+metadata get encrypted)
+   evidence EV-3d5055ac-b811-4715-b48a-1859de487159
+   fileCid=bafkreihdc67kgz4w7ygp5akyb6mr45b7egtdslnucopk3o6lymqgv3b6fu
+   metadataCid=bafkreihj5vlhhww5j4u452uxzpm3nsp4wfcz3igedppphsiqnah4fihcja
+
+### 2. IPFS holds CIPHERTEXT, not the plaintext (F2 design section 7)
+   stored bytes length: 88 (plaintext was 60, overhead 28)
+   stored bytes == plaintext? False
+   sha256(stored) matches ledger fileSha256? True
+
+### 3. GET as collector (registrant): metadata decrypts correctly
+   metadataAvailable: True
+   description: Phone found at scene
+
+### 4. GET as analyst (NOT yet a case member): metadata NOT decryptable
+   metadataAvailable: False (expect False)
+
+### 5. F2 Q3 download endpoint: analyst (not authorised) gets 403 KEY_NOT_AUTHORISED
+   -> 403
+   KEY_NOT_AUTHORISED | You are not authorised to decrypt evidence EV-3d5055ac-b811-4715-b48a-1859de487159
+
+### 6. F3: add analyst as a case member -> re-wrap should grant them access
+   analyst metadataAvailable NOW: True (expect True)
+   description: Phone found at scene
+
+### 7. F2 Q3 download endpoint: analyst NOW authorised, decrypted bytes match the original upload exactly
+Content-Disposition: attachment; filename="upload.bin"
+Content-Type: text/plain
+   downloaded == original plaintext? True
+
+### 8. F3: remove analyst from the case -> revoke
+   analyst metadataAvailable AFTER REVOKE: False (expect False again)
+   -> download after revoke: 403
+   KEY_NOT_AUTHORISED
+
+### 9. tamper test: corrupt the stored ciphertext on real IPFS, confirm verify() catches it WITHOUT decrypting
+   block file located by exact byte match (docker cp + cmp over /data/ipfs/blocks), one byte flipped at offset 40
+   overall status: TAMPERED (expect TAMPERED)
+   file check result: TAMPERED
+   file expectedSha256 == ledger fileSha256: True
+   metadata.result: VERIFIED (untouched - only the file block was corrupted)
+```
+Every result matched the design's stated behaviour. `verify()`'s call path was confirmed by source inspection
+to never reach `ContentKeyService` (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md section 7) - this run demonstrates
+the OUTCOME (TAMPERED detected) that guarantee produces.
+
+### Known gap in this run (see docs/features/f2-f3-envelope-encryption-key-management.md)
+Not exercised: an actual write reaching the chaincode under A2's per-user identity scheme, and the
+custody-transfer-receiver auto-wrap (`sync.EventProcessor`, which requires the real Fabric event stream that
+`memory-ledger` does not provide). Follow-up once the Fabric CA registrar credential is restored.
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),
