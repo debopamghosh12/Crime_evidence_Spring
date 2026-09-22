@@ -10,6 +10,8 @@ import {
     Calendar,
     User,
     ShieldCheck,
+    ShieldAlert,
+    ShieldQuestion,
     FileText,
     History,
     Loader2,
@@ -47,6 +49,15 @@ interface EvidenceDetail {
         collectedAt: string;
         file: { originalName: string; contentType: string; size: number; sha256: string } | null;
     } | null;
+}
+
+// Matches com.blockevidence.backend.dto.VerificationResponse exactly (GET /api/evidence/{id}/verify, C2).
+interface VerificationResponse {
+    status: "VERIFIED" | "TAMPERED" | "NOT_FOUND" | "NOT_CHECKED";
+    ledgerVersion: number | null;
+    checkedAt: string | null;
+    file: { cid: string; expectedSha256: string; actualSha256: string; result: string } | null;
+    metadata: { cid: string; expectedSha256: string; actualSha256: string; result: string } | null;
 }
 
 export default function EvidenceDetailPage() {
@@ -103,6 +114,29 @@ export default function EvidenceDetailPage() {
             setTransferError(err.response?.data?.message || "Transfer failed");
         } finally {
             setTransferLoading(false);
+        }
+    };
+
+    // Verify integrity (C2). Authenticated, by evidence ID - the real backend has no public by-hash
+    // lookup, so there is no standalone /verify/[hash] page here; this is a per-item action instead.
+    const [verifyResult, setVerifyResult] = useState<VerificationResponse | null>(null);
+    const [verifying, setVerifying] = useState(false);
+    const [verifyError, setVerifyError] = useState("");
+
+    const handleVerify = async () => {
+        setVerifying(true);
+        setVerifyError("");
+        setVerifyResult(null);
+        try {
+            // Deliberately needs NO content key - re-fetches and re-hashes the stored ciphertext and
+            // compares against the ledger, same as I1's report.
+            const response = await api.get(`/api/evidence/${id}/verify`);
+            setVerifyResult(response.data);
+        } catch (error: unknown) {
+            const err = error as { response?: { data?: { message?: string } } };
+            setVerifyError(err.response?.data?.message || "Verification failed");
+        } finally {
+            setVerifying(false);
         }
     };
 
@@ -257,6 +291,14 @@ export default function EvidenceDetailPage() {
                         </button>
                     )}
                     <button
+                        onClick={handleVerify}
+                        disabled={verifying}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-border rounded-md hover:bg-muted disabled:opacity-50"
+                    >
+                        {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                        Verify Integrity
+                    </button>
+                    <button
                         disabled
                         title="Wired later in this integration pass (Part A: report)"
                         className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md opacity-50 cursor-not-allowed"
@@ -269,6 +311,45 @@ export default function EvidenceDetailPage() {
             {downloadError && (
                 <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
                     {downloadError}
+                </div>
+            )}
+
+            {verifyError && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
+                    {verifyError}
+                </div>
+            )}
+
+            {verifyResult && (
+                <div className={cn(
+                    "rounded-lg border p-6 shadow-sm space-y-3",
+                    verifyResult.status === "VERIFIED" && "border-green-500/30 bg-green-500/5",
+                    verifyResult.status === "TAMPERED" && "border-destructive/30 bg-destructive/5",
+                    verifyResult.status === "NOT_FOUND" && "border-amber-500/30 bg-amber-500/5"
+                )}>
+                    <h3 className="flex items-center gap-2 font-semibold text-foreground">
+                        {verifyResult.status === "VERIFIED" && <ShieldCheck className="h-5 w-5 text-green-500" />}
+                        {verifyResult.status === "TAMPERED" && <ShieldAlert className="h-5 w-5 text-destructive" />}
+                        {verifyResult.status === "NOT_FOUND" && <ShieldQuestion className="h-5 w-5 text-amber-500" />}
+                        Verification result: {verifyResult.status}
+                        <span className="text-xs font-normal text-muted-foreground ml-auto">
+                            checked {verifyResult.checkedAt ? new Date(verifyResult.checkedAt).toLocaleTimeString() : ""}
+                        </span>
+                    </h3>
+                    {verifyResult.metadata && (
+                        <div className="text-xs space-y-1">
+                            <p className="text-muted-foreground">Metadata: <span className={verifyResult.metadata.result === "VERIFIED" ? "text-green-500" : "text-destructive"}>{verifyResult.metadata.result}</span></p>
+                            <p className="font-mono text-foreground break-all">expected {verifyResult.metadata.expectedSha256}</p>
+                            <p className="font-mono text-foreground break-all">actual &nbsp;&nbsp;{verifyResult.metadata.actualSha256}</p>
+                        </div>
+                    )}
+                    {verifyResult.file && (
+                        <div className="text-xs space-y-1 border-t border-border pt-3">
+                            <p className="text-muted-foreground">File: <span className={verifyResult.file.result === "VERIFIED" ? "text-green-500" : "text-destructive"}>{verifyResult.file.result}</span></p>
+                            <p className="font-mono text-foreground break-all">expected {verifyResult.file.expectedSha256}</p>
+                            <p className="font-mono text-foreground break-all">actual &nbsp;&nbsp;{verifyResult.file.actualSha256}</p>
+                        </div>
+                    )}
                 </div>
             )}
 

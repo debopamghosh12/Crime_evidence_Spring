@@ -752,3 +752,21 @@ real reasons, and correct relative timestamps. Notifications as FORENSIC_ANALYST
 (pending transfers, a disposal-approved event, a status change) plus one already-read item rendered dimmed;
 clicking "Mark all read" cleared all 6, confirmed with a direct `GET /api/notifications` call afterward showing
 `0 unread / 7` total - the loop-of-real-calls approach genuinely persisted, not just updated client-side state.
+
+## D-075
+
+**Frontend integration: Verify, pointed at the real authenticated by-ID endpoint per the owner's explicit
+instruction, not a new public by-hash lookup.** Deleted `app/verify/[hash]/page.tsx` outright rather than
+rewire it: the source repo's design was a PUBLIC page (no login) looking up evidence by content hash via an
+endpoint (`GET /api/v1/verify/:hash`) that has no equivalent on this backend at all - `GET
+/api/evidence/{id}/verify` (C2) is authenticated, by evidence ID, any logged-in role. Added a "Verify
+Integrity" action to the evidence detail page instead (same place as Download File and the yet-to-be-wired
+Generate Report) - one more per-item action, not a standalone page, matching how the real backend actually
+exposes this capability.
+
+**Verified live, and this happened to be the single best live demonstration of F2/F3's whole design point so
+far in the frontend integration**: clicked Verify Integrity as PROSECUTOR on an item whose own Description
+panel says "Metadata unavailable" (PROSECUTOR was never wrapped in for this item's content key) - the
+verification still came back **VERIFIED** on both file and metadata, with expected/actual hashes matching
+exactly. A user with zero content-key access got a complete, trustworthy integrity result, live, through the
+UI - proof C2 genuinely needs no content key, not just a claim in a comment.
