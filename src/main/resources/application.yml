@@ -65,3 +65,15 @@ blockevidence:
     # `openssl rand -base64 32`. Protects every user's stored private key at rest; MasterKey validates the
     # decoded length at startup.
     master-key: ${BLOCKEVIDENCE_ENCRYPTION_MASTER_KEY:}
+
+# K2: springdoc-openapi generates the spec from the controller/DTO annotations at runtime - nothing here is
+# hand-maintained content, just where it renders. Swagger UI at /swagger-ui.html (redirects to
+# /swagger-ui/index.html); raw spec at /v3/api-docs. Both are permitted without a token (SecurityConfig) so the
+# documentation itself is browsable without logging in - trying an operation from the UI still needs a real one.
+springdoc:
+  swagger-ui:
+    operationsSorter: method
+    tagsSorter: alpha
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs

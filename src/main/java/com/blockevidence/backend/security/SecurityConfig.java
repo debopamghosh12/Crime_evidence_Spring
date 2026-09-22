@@ -43,6 +43,10 @@ public class SecurityConfig {
                         // Status only for anonymous callers; component detail is gated by
                         // management.endpoint.health.show-details=when-authorized (ADMIN), see application.yml.
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        // K2: the DOCUMENTATION is browsable without a token - trying an operation from the UI
+                        // still needs a real one, exactly like any other API client.
+                        .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", "/v3/api-docs/**")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(entryPoint)

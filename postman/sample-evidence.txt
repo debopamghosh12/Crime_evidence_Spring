@@ -1,0 +1,4 @@
+This is a sample file used by the BlockEvidence Postman collection's "Register DIGITAL evidence (encrypted)"
+request, so the collection can be run automatically (e.g. via Newman) without needing a file manually attached
+in the Postman UI first. Its content is arbitrary - only its bytes and hash matter for the demo (F2/F3 encrypts
+it before pinning to IPFS; the ledger records the ciphertext's SHA-256).

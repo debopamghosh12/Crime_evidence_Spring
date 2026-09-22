@@ -574,3 +574,27 @@ Full account: docs/features/l2-l3-testcontainers-and-compose.md, DECISIONS D-066
   3m31s) - register/encrypt/pin/verify all working inside the containerized stack. Known limit found live: a
   backend container restart loses all `memory-ledger` evidence data (Postgres-native data survives) - documented
   in the compose file itself, not just the docs; real Fabric removes this limit.
+
+## 22. As built (Phase 5, K2): API documentation - Swagger + Postman, 2026-09-22
+
+Full account: docs/features/k2-api-documentation.md, DECISIONS D-068.
+
+- **New dependency: springdoc-openapi-starter-webmvc-ui 2.8.6** (owner-approved). `config/OpenApiConfig` supplies
+  the shared `bearerAuth` scheme; every controller carries `@Tag`/`@Operation`/`@ApiResponse` with real,
+  specific text describing actual behaviour and actual `@PreAuthorize` role requirements - not auto-generated
+  stubs. `SecurityConfig` permits `/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs*` unauthenticated (browsing
+  the docs needs no token; exercising an operation from the UI still does, like any other client).
+- Four flows the owner specifically asked to be documented accurately: register's F2/F3 automatic encryption,
+  the two-step custody transfer (who may call initiate/accept/reject/cancel, and that custody does not move
+  until accept), the disposal request/decide split (JUDGE-only decide), and `/verify`+`/report`'s shared
+  property of needing no content key.
+- **`postman/`**: a Postman v2.1 collection (42 requests, 5 folders matching the Swagger tag grouping) and
+  environment (`baseUrl` + per-role tokens chained by each request's own test script) rebuilt to cover every
+  endpoint actually live across all 5 phases, plus `sample-evidence.txt` so DIGITAL registration runs unattended.
+- **Verified**: Swagger UI loaded in a real browser (zero console errors, 33 operations with real summaries);
+  `/v3/api-docs` is valid OpenAPI 3.1 with 33 paths and 0 missing summaries; the full Postman collection run
+  three times via Newman against the real docker-compose stack, final result 42/42 requests / 0 failed / 20/20
+  assertions, including the three flows the owner named specifically (login, register-with-encryption,
+  generate-a-report).
+- This is the last item of Phase 5 and of the full feature list - see docs/HANDOVER.md for the end-of-project
+  summary and where the strongest evidence sits for each P0 claim.

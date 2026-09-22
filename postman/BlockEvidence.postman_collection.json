@@ -1,0 +1,1654 @@
+{
+  "info": {
+    "name": "BlockEvidence API",
+    "description": "K2. Mirrors the live Spring controllers exactly - every endpoint through Phase 5 (F2/F3 encryption, F5 retry, I1 report, plus every Phase 1-4 endpoint), not just Phase 1-2. Run the Auth folder first (top to bottom) to populate the token variables every other request depends on, then Cases, then Evidence/Custody in order - later requests in those folders depend on ids/versions set by earlier ones in the SAME run (expectedVersion in particular: each write bumps the ledger version, so requests must run in the order they appear, not out of order or twice).\n\nSee docs/features/k2-api-documentation.md for the full account and live verification log, and /swagger-ui.html on a running instance for the generated OpenAPI docs (same source of truth: the controller annotations).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Public login/refresh; logout and /me need a token. Run first.",
+      "item": [
+        {
+          "name": "Login (collector)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"collector@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('collectorToken', body.accessToken);",
+                  "pm.environment.set('collectorRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (forensic-analyst)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"forensic-analyst@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('analystToken', body.accessToken);",
+                  "pm.environment.set('analystRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (prosecutor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"prosecutor@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('prosecutorToken', body.accessToken);",
+                  "pm.environment.set('prosecutorRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (judge)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"judge@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('judgeToken', body.accessToken);",
+                  "pm.environment.set('judgeRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('adminToken', body.accessToken);",
+                  "pm.environment.set('adminRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login (auditor)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Public. Sets the environment token variable used by every other request in this collection for this role, via the test script below.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"auditor@blockevidence.local\",\n  \"password\": \"{{devSeedPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('auditorToken', body.accessToken);",
+                  "pm.environment.set('auditorRefreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me (collector)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Sets collectorId, used by requests below that need a real user id (e.g. leadOfficerId, toUserId)."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('collectorId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me (analyst)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{analystToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Sets analystId, used by Add member and Initiate custody transfer below."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('analystId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Public - the refresh token itself is the credential. Rotates both tokens; the old refresh token is now revoked (single-use).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{collectorRefreshToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('collectorToken', pm.response.json().accessToken);",
+                  "pm.environment.set('collectorRefreshToken', pm.response.json().refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout (collector)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "204 No Content either way - never confirms whether the token existed. Placed last in this folder deliberately; running it earlier would break every later collector-authenticated request in a full collection run unless Login (collector) runs again first.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{collectorRefreshToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cases",
+      "description": "E1/E2. Role: ADMIN or PROSECUTOR to manage; any role to read.",
+      "item": [
+        {
+          "name": "Create case",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases"
+              ]
+            },
+            "description": "Role: ADMIN or PROSECUTOR. Run Me (collector) first so {{collectorId}} is set.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"caseNumber\": \"PM-{{$timestamp}}\",\n  \"title\": \"Postman collection demo case\",\n  \"description\": \"Created by the Postman collection's own run\",\n  \"leadOfficerId\": \"{{collectorId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('caseId', body.id);",
+                  "pm.environment.set('caseNumber', body.caseNumber);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List cases",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases"
+              ]
+            },
+            "description": "Any authenticated role."
+          },
+          "response": []
+        },
+        {
+          "name": "Get case",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases/{{caseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{caseId}}"
+              ]
+            },
+            "description": "Any authenticated role."
+          },
+          "response": []
+        },
+        {
+          "name": "Add member (analyst)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases/{{caseId}}/members",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{caseId}}",
+                "members"
+              ]
+            },
+            "description": "Role: ADMIN or PROSECUTOR. F3: re-wraps the analyst's content key for every evidence item already linked to this case. Needs {{analystId}} - run Me as the analyst once, or look it up via GET /api/cases (members) first.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{analystId}}\",\n  \"caseRole\": \"FORENSIC_ANALYST\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update case",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases/{{caseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{caseId}}"
+              ]
+            },
+            "description": "Role: ADMIN or PROSECUTOR. At least one of title/description/leadOfficerId is required.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman collection demo case (updated)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Case evidence",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases/{{caseId}}/evidence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{caseId}}",
+                "evidence"
+              ]
+            },
+            "description": "Any authenticated role. The full evidence records linked to this case."
+          },
+          "response": []
+        },
+        {
+          "name": "Remove member (analyst)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/cases/{{caseId}}/members/{{analystId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "cases",
+                "{{caseId}}",
+                "members",
+                "{{analystId}}"
+              ]
+            },
+            "description": "Role: ADMIN or PROSECUTOR. F3: revokes the analyst's content-key access to this case's evidence. Not retroactive."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Evidence",
+      "description": "B1-B5, C2, C3, F2/F3, I1. The core resource.",
+      "item": [
+        {
+          "name": "Register DIGITAL evidence (encrypted)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence"
+              ]
+            },
+            "description": "Role: COLLECTOR or FORENSIC_ANALYST. Multipart: JSON part \"metadata\" + binary part \"file\" - ships pre-attached to postman/sample-evidence.txt (relative to this collection's own folder) so the request runs unattended via Newman; swap in any real file in the Postman UI instead. F2/F3 (automatic): the file and metadata are AES-256-GCM encrypted before being pinned to IPFS; the ledger's recorded hash covers the ciphertext. Run Create case first so {{caseNumber}} is set.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "metadata",
+                  "value": "{\"caseId\": \"{{caseNumber}}\", \"type\": \"DIGITAL\", \"description\": \"Postman collection demo - seized phone image\", \"location\": \"Evidence locker 4\"}",
+                  "type": "text",
+                  "contentType": "application/json"
+                },
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "sample-evidence.txt"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('evidenceId', body.evidenceId);",
+                  "pm.environment.set('fileCid', body.fileCid);",
+                  "pm.test('file is encrypted: fileSha256 present on the ledger record', () => pm.expect(body.fileSha256).to.be.a('string'));",
+                  "pm.test('metadata decrypted for the registrant', () => pm.expect(body.metadataAvailable).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register PHYSICAL evidence",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence"
+              ]
+            },
+            "description": "Role: COLLECTOR or FORENSIC_ANALYST. PHYSICAL evidence must NOT include a file part.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "metadata",
+                  "value": "{\"caseId\": \"{{caseNumber}}\", \"type\": \"PHYSICAL\", \"description\": \"Postman collection demo - a knife\"}",
+                  "type": "text",
+                  "contentType": "application/json"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Search evidence",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/search?caseId={{caseNumber}}&page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "caseId",
+                  "value": "{{caseNumber}}"
+                },
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Any authenticated role (H1). Served from the G3 read model."
+          },
+          "response": []
+        },
+        {
+          "name": "Get evidence",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}"
+              ]
+            },
+            "description": "Any authenticated role. metadata is decrypted with the CALLER's own wrapped content key."
+          },
+          "response": []
+        },
+        {
+          "name": "Get evidence (verify=true)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}?verify=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}"
+              ],
+              "query": [
+                {
+                  "key": "verify",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Re-fetches and re-hashes stored content against the ledger (C2); audited as a DOWNLOAD."
+          },
+          "response": []
+        },
+        {
+          "name": "Find by CID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/by-cid/{{fileCid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "by-cid",
+                "{{fileCid}}"
+              ]
+            },
+            "description": "Any authenticated role. {{fileCid}} was captured by Register DIGITAL evidence's own test script above - every evidence item that ever referenced this CID comes back."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get version 1",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/versions/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "versions",
+                "1"
+              ]
+            },
+            "description": "Any authenticated role (B4). Every earlier version stays readable."
+          },
+          "response": []
+        },
+        {
+          "name": "Full history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "history"
+              ]
+            },
+            "description": "Any authenticated role (C3). Every committed version with its real Fabric transaction id."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify integrity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{judgeToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "verify"
+              ]
+            },
+            "description": "Deliberately run AS THE JUDGE, who may hold no content key for this item at all: verify() needs none (F2/F3 design) - only IPFS reachability. Proves the property live."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('VERIFIED', () => pm.expect(pm.response.json().status).to.eql('VERIFIED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chain-of-custody PDF report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{judgeToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "report"
+              ]
+            },
+            "description": "I1 - also run AS THE JUDGE deliberately, for the same reason as Verify above: the report is built entirely from ledger + verification data, never decrypted content, so a Judge with no content key still gets the full report. Response body is the PDF bytes."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('is a PDF', () => pm.expect(pm.response.headers.get('Content-Type')).to.eql('application/pdf'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download decrypted file",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/file",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "file"
+              ]
+            },
+            "description": "F2 Q3. The ONE read that needs content access - the caller's wrapped key decrypts the file. Try this same request with {{judgeToken}} instead (a role never wrapped in for this item) to see 403 KEY_NOT_AUTHORISED."
+          },
+          "response": []
+        },
+        {
+          "name": "Update metadata (new version)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}"
+              ]
+            },
+            "description": "Role: COLLECTOR or FORENSIC_ANALYST, AND must hold a wrapped content key for this item (F2/F3 side effect). expectedVersion is optimistic concurrency - match the item's current version exactly.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 1,\n  \"reason\": \"Postman collection demo edit\",\n  \"location\": \"Evidence locker 7\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Request disposal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{prosecutorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/disposal",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "disposal"
+              ]
+            },
+            "description": "Role: COLLECTOR or PROSECUTOR (B5, step 1 of 2). Nothing is removed yet.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 2,\n  \"reason\": \"Postman collection demo - case closed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Approve disposal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{judgeToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/disposal/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "disposal",
+                "approve"
+              ]
+            },
+            "description": "Role: JUDGE only (step 2 of 2). Status becomes DISPOSED; the record is never deleted (C-02) - still readable and verifiable forever.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 3,\n  \"note\": \"Approved via the Postman collection demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reject disposal (alternate path, expected 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{judgeToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{evidenceId}}/disposal/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{evidenceId}}",
+                "disposal",
+                "reject"
+              ]
+            },
+            "description": "Role: JUDGE only. Deliberately run AFTER Approve above to demonstrate the two are mutually exclusive on the same version - Approve already moved the item to version 4, so this one's expectedVersion=3 is now stale. A genuine 409 VERSION_CONFLICT here is the CORRECT, asserted outcome, not a broken request.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 3,\n  \"note\": \"Rejected via the Postman collection demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict (EXPECTED - Approve above already consumed this version)', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Custody & Status",
+      "description": "D1-D3. Status state machine and two-step custody transfer.",
+      "item": [
+        {
+          "name": "Register evidence for this folder",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence"
+              ]
+            },
+            "description": "A fresh item just for this folder, so its own version sequence (below) never collides with whatever the Evidence folder already did to {{evidenceId}}. Run Create case first.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "metadata",
+                  "value": "{\"caseId\": \"{{caseNumber}}\", \"type\": \"PHYSICAL\", \"description\": \"Postman collection demo - custody & status folder\"}",
+                  "type": "text",
+                  "contentType": "application/json"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('custodyEvidenceId', pm.response.json().evidenceId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Change status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{analystToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{custodyEvidenceId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{custodyEvidenceId}}",
+                "status"
+              ]
+            },
+            "description": "Role: COLLECTOR, FORENSIC_ANALYST or PROSECUTOR (D1). Must follow the legal state machine in order - a skip is 409 INVALID_STATE.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 1,\n  \"status\": \"PROCESSING\",\n  \"reason\": \"Sent to forensic lab (Postman demo)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Initiate custody transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{custodyEvidenceId}}/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{custodyEvidenceId}}",
+                "transfers"
+              ]
+            },
+            "description": "Role: any custody-capable role, and must be the CURRENT CUSTODIAN (D2, step 1 of 2). Custody does NOT move yet. Needs {{analystId}} - run Me as the analyst once beforehand.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 2,\n  \"toUserId\": \"{{analystId}}\",\n  \"reason\": \"Forensic analysis (Postman demo)\",\n  \"notes\": \"Sealed bag 7, seal intact\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Accept transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{analystToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{custodyEvidenceId}}/transfers/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{custodyEvidenceId}}",
+                "transfers",
+                "accept"
+              ]
+            },
+            "description": "Must be the NAMED RECEIVER (step 2 of 2). The only step that actually moves custody.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expectedVersion\": 3,\n  \"note\": \"Received intact (Postman demo)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Pending transfers (mine)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/transfers/pending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transfers",
+                "pending"
+              ]
+            },
+            "description": "Role: any custody-capable role. Only the caller's own pending transfers as receiver."
+          },
+          "response": []
+        },
+        {
+          "name": "Custody timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/evidence/{{custodyEvidenceId}}/chain-of-custody",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "evidence",
+                "{{custodyEvidenceId}}",
+                "chain-of-custody"
+              ]
+            },
+            "description": "Any authenticated role (D3). Custody-relevant events only, from the ledger's full history."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Activity, Dashboard, Notifications, Audit",
+      "description": "H1-H4, A6. Off-chain read models.",
+      "item": [
+        {
+          "name": "Activity feed",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/activity?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "activity"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Any authenticated role (H3). Newest first, from G3's off-chain read model."
+          },
+          "response": []
+        },
+        {
+          "name": "Dashboard summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{collectorToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "dashboard"
+              ]
+            },
+            "description": "Any authenticated role (H2). Aggregate counts only."
+          },
+          "response": []
+        },
+        {
+          "name": "My notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{analystToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "notifications"
+              ]
+            },
+            "description": "Any authenticated role (H4). Always the caller's own - the analyst should see a TRANSFER_PENDING notification here after Initiate custody transfer above."
+          },
+          "response": []
+        },
+        {
+          "name": "Audit log",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "audit"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Role: ADMIN or AUDITOR only (A6). Every VIEW/DOWNLOAD and failed-auth/denied attempt."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

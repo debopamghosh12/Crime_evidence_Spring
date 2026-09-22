@@ -4,6 +4,8 @@ import com.blockevidence.backend.dto.ActivityEntryResponse;
 import com.blockevidence.backend.dto.PageResponse;
 import com.blockevidence.backend.security.Permissions;
 import com.blockevidence.backend.service.ActivityService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 /** H3. */
 @RestController
 @RequestMapping("/api/activity")
+@Tag(name = "Activity", description = "The live activity feed, served from G3's off-chain read model, never "
+        + "the ledger directly.")
 public class ActivityController {
 
     private final ActivityService activityService;
@@ -23,6 +27,9 @@ public class ActivityController {
 
     @GetMapping
     @PreAuthorize(Permissions.READ_EVIDENCE)
+    @Operation(summary = "Recent activity", description = "Any authenticated role. Every ledger event, newest "
+            + "first; `caseId` narrows the result but is not an access restriction (A5 is not built - any "
+            + "authenticated user can already see every case's activity). `size` is capped at 200.")
     public PageResponse<ActivityEntryResponse> feed(@RequestParam(required = false) String caseId,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         return activityService.feed(caseId, page, size);

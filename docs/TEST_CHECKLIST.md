@@ -1008,6 +1008,64 @@ fresh, empty ledger. Not a compose bug - the documented nature of the reference 
 concretely and written into `docker-compose.yml` itself as a warning, not left as a surprise.
 
 
+## P5-K2. Phase 5: API documentation - Swagger + Postman (K2) — 2026-09-22
+
+Per DECISIONS D-068. Both artifacts checked LIVE, not by inspection of the annotations/JSON alone.
+
+**Swagger UI, loaded in a real Chrome tab against the running backend:**
+```
+Navigated to http://localhost:8080/swagger-ui.html -> redirected to /swagger-ui/index.html
+Title:              "BlockEvidence API"
+Tags rendered:      Auth, Cases, Evidence, Custody & Status, Activity, Dashboard, Notifications, Audit  (8)
+Operations rendered: 33
+Console errors:     0  (read_console_messages, full page lifecycle)
+Expanded "POST /api/evidence/{id}/verify" -> full rich description rendered verbatim, incl. the
+  "does not require a content key" sentence.
+```
+
+**`/v3/api-docs` fetched and validated programmatically:**
+```
+$ curl -s http://localhost:8080/v3/api-docs | python -c "import json,sys; d=json.load(sys.stdin);
+  print('openapi', d['openapi']); print('paths', len(d['paths']));
+  print('missing summary', sum(1 for p in d['paths'].values() for m in p.values() if 'summary' not in m))"
+openapi 3.1.0
+paths 33
+missing summary 0
+securitySchemes: ['bearerAuth']
+```
+
+**Postman collection, run via Newman against the real docker-compose stack (postgres+ipfs+backend, `memory-ledger`), 3 consecutive runs — final run:**
+```
+$ npx --yes newman run postman/BlockEvidence.postman_collection.json \
+    -e test_environment.json --working-dir postman
+
+┌─────────────────────────┬──────────────────┬──────────────────┐
+│                         │         executed │            failed │
+├─────────────────────────┼──────────────────┼──────────────────┤
+│              iterations │                1 │                  0 │
+│                requests │               42 │                  0 │
+│            test-scripts │               16 │                  0 │
+│      prerequest-scripts │                0 │                  0 │
+│              assertions │               20 │                  0 │
+├─────────────────────────┴──────────────────┴──────────────────┤
+│ total run duration: 4.2s                                        │
+└──────────────────────────────────────────────────────────────────┘
+```
+Confirms the three flows the owner asked to see specifically (login as collector, register DIGITAL evidence
+with encryption -> 201 with a real `fileCid`, generate a chain-of-custody report -> 200 PDF) plus every other
+live endpoint chained end to end with real data (case creation, member add, custody transfer, disposal
+request/approve, dashboard/activity/notifications/audit reads). All 3 runs were consistent (0 failures each);
+first run surfaced 5 real collection bugs (see docs/features/k2-api-documentation.md), all fixed before this
+final run.
+
+This closes Phase 5 and the full feature list. Full project regression, run once more before the K2 commit:
+```
+$ ./mvnw.cmd test
+[INFO] Tests run: 255, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
 **Read this first.** Every live result in THIS section (P2) ran against `InMemoryLedgerService` (profile `memory-ledger`),

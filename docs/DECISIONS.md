@@ -508,3 +508,56 @@ no persistence of its own (its own startup log already says so - "loses all data
 backend container is a fresh JVM. This is not a bug in the compose file; it is the documented nature of the
 reference ledger, now made concrete: anyone using this stack for a demo must not restart the `backend` service
 mid-demo, or re-register evidence afterward. Connecting to a real, persistent Fabric network removes this limit.
+
+## D-068 — K2: springdoc-openapi 2.8.6 generated from real controller annotations, not a hand-maintained spec (2026-09-22)
+Owner-approved new dependency (C-04, explicitly named by the owner): `springdoc-openapi-starter-webmvc-ui`
+2.8.6 (current latest on Maven Central, checked live). The spec is generated at runtime from `@Operation`/
+`@ApiResponse`/`@Tag` annotations added directly on the real controller methods - the source of truth is the
+actual code, so it cannot silently drift from what the endpoints really do the way a separately-maintained
+document could. Every one of the 33 generated paths across all 8 tags (Auth, Cases, Evidence, Custody & Status,
+Activity, Dashboard, Notifications, Audit) has a real, specific summary - none left as an auto-generated stub.
+
+Per the owner's explicit instruction, the four named flows got the richest documentation, matching real
+behaviour rather than aspiration: **register** (F2/F3 encryption is automatic and described in the operation
+itself: a fresh content key generated, both artifacts encrypted before pinning, wrapped for the registrant and
+current case members); **the two-step custody transfer** (initiate/accept/reject/cancel, each stating exactly
+who must call it - current custodian vs. named receiver vs. original sender - and that custody does NOT move on
+initiate); **the disposal approval flow** (request by COLLECTOR/PROSECUTOR, decide by JUDGE only, DISPOSED is
+reachable no other way); and **`/verify` and `/report`**, both documented as needing NO content key at all
+(F2/F3 design section 7 and I1), the one property that most differs from the ordinary "any read needs a wrapped
+key" story. Every `@PreAuthorize` role requirement is stated in plain language in the matching operation's
+description, since springdoc does not translate Spring Security SpEL into readable text automatically.
+
+`SecurityConfig` gained a `permitAll` for `/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs`, `/v3/api-docs/**`
+- the documentation itself is browsable without a token; trying an operation from the "Try it out" UI still
+needs a real one, exactly like any other API client (the global `bearerAuth` security requirement in
+`OpenApiConfig`, overridden with `@SecurityRequirements` only on the two genuinely public auth endpoints).
+
+**Postman collection rebuilt from scratch** (`postman/BlockEvidence.postman_collection.json`), covering every
+endpoint live in the controllers today - all of Phase 1-2's original surface plus every Phase 3-5 addition
+(cases, custody transfer, disposal, search/dashboard/activity/notifications/audit, the F2/F3 encrypted
+register/file endpoints, /verify, /report) - not a stale Phase 1-2 snapshot. Structured as folders matching the
+same Swagger tags, with a `baseUrl` environment variable and test scripts that chain real values (tokens, user
+ids, case/evidence ids) between requests so it is genuinely runnable end to end, not just descriptive. A
+`postman/sample-evidence.txt` file ships with the collection so the DIGITAL registration request runs unattended
+via Newman without a file needing to be attached manually first.
+
+**Found live, fixed before this was "done" (not simulated by planning ahead):** the collection's own version
+numbers collided across folders on a full run - the Evidence folder's disposal flow left the shared
+`{{evidenceId}}` at version 4 (DISPOSED) before the Custody & Status folder's `expectedVersion: 1` request ran
+against the SAME item, which would have failed every request in that folder. Fixed by having Custody & Status
+register its own independent item (`{{custodyEvidenceId}}`) - each folder is now independently runnable, not
+just a single fixed end-to-end sequence. Also found: the DIGITAL-evidence file part had no file attached (an
+empty `src`), which would silently fail as `FILE_REQUIRED` under Newman; fixed with the checked-in sample file.
+The "Find by CID" request also depended on a `{{fileCid}}` variable nothing ever set - fixed by having the
+register request's own test script capture it.
+
+**Verified live**, in order: (1) Swagger UI loaded in a real browser (`/swagger-ui.html`) - correct title,
+description, all 8 tags, all 33 operations with real summaries, zero console errors, and the "Verify integrity"
+operation's full rich description rendered exactly as written when expanded; (2) `/v3/api-docs` returns valid
+OpenAPI 3.1 JSON, 33 paths, the `bearerAuth` security scheme present, zero operations missing a summary; (3) the
+FULL Postman collection run three times via Newman (`npx newman run`, no new project dependency - a one-off CLI
+tool for verification only) against the real docker-compose stack (real Postgres, real IPFS, `memory-ledger`):
+**42/42 requests executed, 0 failed, 20/20 assertions passed**, consistently across all three runs. This
+includes the exact three flows the owner asked to confirm - login, register with encryption, generate a report
+- plus every other endpoint in the API, chained together with real data end to end, not just individually.
