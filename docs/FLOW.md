@@ -227,3 +227,25 @@ transaction -> the chaincode's `authorise()` reads the certificate's `role`/`hf.
 `actorId`/`actorRole` arguments Spring still sends (unchanged), and only then checks the role-permission table
 (unchanged). Every READ (`GetEvidence`, `GetHistory`, `FindByCid`, `FindPendingTransfers`, the health probe) is
 completely unaffected: they still use the single SERVICE identity, as before A2.
+
+## 19. Ledger event sync (G3)
+
+```
+EventSyncListener.run() (ApplicationRunner, on its own single-thread executor)
+ └─ loop: runOnce()
+     ├─ CheckpointStore read (ledger_sync_checkpoint)                     empty -> Checkpoint.NONE
+     ├─ LedgerEventSource.openEventStream(checkpoint)                     FabricLedgerService: startBlock(0) or .checkpoint(...)
+     │     (only ledger/ talks to Fabric here too, C-01)
+     ├─ for each LedgerEvidenceEvent (blocking):
+     │     ├─ LedgerService.getHistory(evidenceId) -> find entry by txId   (enrichment; OUTSIDE any DB transaction)
+     │     ├─ applyWithLocalRetry: up to 3x, 200ms fixed pause             (tier 1, design section 9)
+     │     │     └─ EventProcessor.apply(event, record)  @Transactional
+     │     │           ├─ EvidenceActivityRepository.insertIfAbsent (ON CONFLICT tx_id DO NOTHING)   0 rows -> stop here
+     │     │           ├─ EvidenceProjectionRepository.upsert (compare-and-set on version)
+     │     │           └─ LedgerSyncCheckpointRepository.advance
+     │     └─ tier 1 exhausted -> escalate (caught by runOnce's catch)
+     └─ any exception reaching runOnce's catch: close the stream, exponential backoff (tier 2, design section 9),
+        loop again from a freshly re-read checkpoint
+```
+`EventSyncHealthIndicator` reads `EventSyncListener`'s in-memory failure counter for `/actuator/health` component
+`eventSync`. Nothing else in the request-handling flow (sections 1-18) changes: G3 only reads the ledger.

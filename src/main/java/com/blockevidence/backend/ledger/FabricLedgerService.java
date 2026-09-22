@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -26,6 +27,8 @@ import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.TlsChannelCredentials;
 import org.hyperledger.fabric.client.CallOption;
+import org.hyperledger.fabric.client.ChaincodeEvent;
+import org.hyperledger.fabric.client.CloseableIterator;
 import org.hyperledger.fabric.client.CommitException;
 import org.hyperledger.fabric.client.Contract;
 import org.hyperledger.fabric.client.Gateway;
@@ -67,7 +70,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Service
 @Profile("!memory-ledger")
-public class FabricLedgerService implements LedgerService, DisposableBean {
+public class FabricLedgerService implements LedgerService, LedgerEventSource, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(FabricLedgerService.class);
 
@@ -169,6 +172,54 @@ public class FabricLedgerService implements LedgerService, DisposableBean {
     public List<String> findPendingTransferIds(String userId) {
         return parse(evaluate("FindPendingTransfers", userId), new TypeReference<List<String>>() {
         });
+    }
+
+    // ------------------------------------------------------------------------------ G3: event stream
+
+    /** The chaincode's event payload (docs/CHAINCODE_DESIGN.md section 6): identifiers only, C-06. */
+    record WireEventPayload(String evidenceId, int version, String txId, LedgerAction action) {
+    }
+
+    @Override
+    public LedgerEventStream openEventStream(Checkpoint from) {
+        // Ensures the gateway/channel exist (reuses the service identity's connection; reads and event
+        // subscriptions need no per-user identity, A2 does not apply here).
+        serviceContract();
+        var request = serviceGateway.getNetwork(properties.channel()).newChaincodeEventsRequest(properties.chaincode());
+        if (from.isNone()) {
+            request.startBlock(0); // first ever run (or a reset checkpoint): replay all history (design section 6)
+        } else {
+            request.checkpoint(new org.hyperledger.fabric.client.Checkpoint() {
+                @Override
+                public OptionalLong getBlockNumber() {
+                    return OptionalLong.of(from.blockNumber());
+                }
+
+                @Override
+                public Optional<String> getTransactionId() {
+                    return Optional.ofNullable(from.txId());
+                }
+            });
+        }
+        CloseableIterator<ChaincodeEvent> events = request.build().getEvents();
+        return new LedgerEventStream() {
+            @Override
+            public boolean hasNext() {
+                return events.hasNext();
+            }
+
+            @Override
+            public LedgerEvidenceEvent next() {
+                ChaincodeEvent e = events.next();
+                WireEventPayload p = parse(e.getPayload(), WireEventPayload.class);
+                return new LedgerEvidenceEvent(p.evidenceId(), p.version(), p.txId(), e.getBlockNumber(), p.action());
+            }
+
+            @Override
+            public void close() {
+                events.close();
+            }
+        };
     }
 
     // -------------------------------------------------------------------------------------- reads

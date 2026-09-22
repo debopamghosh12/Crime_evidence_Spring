@@ -414,3 +414,24 @@ Phase 2 is implemented and verified live against BOTH the in-memory reference le
 - **Residual, not closed by A2 (constraint C-08, revised wording):** the backend still custodies every user's private
   key; a compromised backend host can sign as any enrolled user. See docs/A2_IDENTITY_DESIGN.md section 4 and
   docs/KNOWN_GAPS.md.
+
+## 16. As built (Phase 4, G3): ledger event sync, 2026-09-22
+
+- **New `ledger/` types** (C-01, only `ledger/` imports Fabric types): `LedgerEventSource` (interface),
+  `LedgerEventStream`, `LedgerEvidenceEvent`, `Checkpoint`. `FabricLedgerService` implements `LedgerEventSource`
+  in addition to `LedgerService`, reusing its existing service-identity connection (reads/event streams need no
+  per-user identity, A2 does not apply). `!memory-ledger`-scoped, same as A2's `IdentityStore`.
+- **New `sync/` package** (never imports Fabric types): `EventSyncListener` (the background loop, design sections
+  6/9), `EventProcessor` (the atomic per-event unit of work, design section 5), `EventSyncHealthIndicator`
+  (`/actuator/health` component `eventSync`), JPA entities/repositories `EvidenceActivity`, `EvidenceProjection`,
+  `LedgerSyncCheckpoint`.
+- **Flyway `V4__event_sync.sql`**: `ledger_sync_checkpoint` (one row), `evidence_activity` (append-only, `tx_id`
+  UNIQUE - the idempotency log and the H3 feed source in one table), `evidence_projection` (current state, for H1/H2).
+- **Full design, including the consistency guarantees:** `docs/G3_SYNC_DESIGN.md` (owner-approved before
+  implementation, including an added backoff/health section, section 9).
+- **Verified live:** a first-ever run replayed the whole ledger from block 0 (164 activity rows / 90 projection
+  rows in one pass); a write while the listener was running synced within seconds; two writes made directly to
+  the chaincode (bypassing Spring, proven by writing them while the whole application was stopped) were both
+  present with correct txIds and the checkpoint caught up after a restart, with zero duplicates; a further
+  redundant restart with no new writes left every count unchanged. Full output: TEST_CHECKLIST P4-G3.
+- **Not built yet:** H1-H4 (read from this schema) and A6 (independent of it). Nothing in Phase 1-3 changed.

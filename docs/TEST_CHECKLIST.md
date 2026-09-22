@@ -516,6 +516,90 @@ timestamps differ, plus one nondeterministic JSON field-ordering difference in a
 **Verification plan items 3 (Java: wallet loading, cache bound, missing entry, no leak) and 5 (recorded gaps,
 not tested)** are covered by the Java test run above and by docs/KNOWN_GAPS.md section B respectively.
 
+## P4-G3. Phase 4: ledger event listener (G3) — built, deployed and verified 2026-09-22
+
+Design approved (docs/G3_SYNC_DESIGN.md, including an added reconnect/backoff section) BEFORE any code was
+written, per the owner's instruction. H1-H4 and A6 are not built yet; this section is G3 alone.
+
+**Java tests (197 total, up from 183 after A2), full per-class table:**
+```
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0  config.JwtPropertiesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  controller.EvidenceControllerTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  controller.Phase3ControllersTest
+Tests run: 22, Failures: 0, Errors: 0, Skipped: 0  ledger.FabricLedgerServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  ledger.FileWalletIdentityStoreTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.HealthIndicatorsTest
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerServiceTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  ledger.InMemoryLedgerTransferTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  ledger.WalletHealthIndicatorTest
+Tests run: 9, Failures: 0, Errors: 0, Skipped: 0  security.JwtServiceTest
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0  security.SecurityAndErrorFormatTest
+Tests run: 13, Failures: 0, Errors: 0, Skipped: 0  service.AuthServiceTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  service.CaseServiceTest
+Tests run: 27, Failures: 0, Errors: 0, Skipped: 0  service.EvidenceServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0  service.HashingInputStreamTest
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0  service.LifecycleServicesTest
+Tests run: 12, Failures: 0, Errors: 0, Skipped: 0  storage.HttpIpfsClientTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  sync.EventProcessorTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0  sync.EventSyncHealthIndicatorTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0  sync.EventSyncListenerTest
+Tests run: 197, Failures: 0, Errors: 0, Skipped: 0
+```
+New: `EventProcessorTest` (3: a genuinely new event upserts and advances the checkpoint, a redelivered event
+touches neither, each event gets its own activity id), `EventSyncListenerTest` (8: first-run starts at block 0,
+a clean multi-event run, tier 1 succeeding on retry with NO stream teardown, tier 1 exhausted escalating as
+exactly ONE stream-level failure, a stream failing partway through, `hasEverConnected` staying false through
+repeated failed connection attempts and flipping true on the first success, the 5-failure unhealthy threshold,
+backoff delay values - exponential with a 30s cap - at every consecutive-failure count), `EventSyncHealthIndicatorTest`
+(3: UNKNOWN/UP/DOWN mapping).
+
+**Live: the direct demonstration the owner asked for (design section 10) - stop the listener between two writes,
+write while it is down, restart, confirm both appear with no duplicates and the checkpoint caught up:**
+```
+### First-ever run (empty checkpoint): backfilled the whole ledger from block 0
+   eventSync health: UP, consecutiveFailures=0
+   evidence_activity rows: 164
+   evidence_projection rows: 90
+   ledger_sync_checkpoint block_number: 223
+
+### Register while the listener is running (collector, case FAB-G3-LIVE)
+   EVA=EV-a491efd6-96f5-438c-b8d6-2a6e9ca72646
+   evidence_activity row for EVA: action=CREATED txId=2d53e96449d81810bac088c23a4af86d74e4a6cb018bedb399c93b243252de56
+   (present within ~2s of the write, no polling needed)
+
+### App fully stopped (kills the listener)
+   evidence_activity rows before outage writes: 165
+   checkpoint block_number: 224
+### Enrolling a throwaway COLLECTOR identity (revoked at the end)
+### Writing EV-b5fccd41-1146-4797-a1c7-0118b4a257ae directly to the chaincode (Spring is stopped; this is exactly what it would miss)
+2026-09-22 05:09:15.083 UTC 0003 INFO [chaincodeCmd] chaincodeInvokeOrQuery -> Chaincode invoke successful. result: status:200 payload:"{\"txId\":\"edd8ee3edbc66c810b84f1112d203bf8a6f19b392181054654f6af5cfa849b15\",\"timestamp\":\"2026-09-22T05:09:13.024983443Z\",\"version\":1}" 
+### Writing EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c directly to the chaincode (Spring is stopped; this is exactly what it would miss)
+2026-09-22 05:09:17.266 UTC 0003 INFO [chaincodeCmd] chaincodeInvokeOrQuery -> Chaincode invoke successful. result: status:200 payload:"{\"txId\":\"d770c050342ba76fd1a804e05ffd51ba7d92251ec869f2b575c15d73014564d1\",\"timestamp\":\"2026-09-22T05:09:15.215636239Z\",\"version\":1}" 
+written ids:
+EV-b5fccd41-1146-4797-a1c7-0118b4a257ae
+EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c
+
+### While still stopped: confirmed Postgres has NOT changed (the outage really is invisible while down)
+   evidence_activity rows: 165 (unchanged)
+   evidence_projection rows for the two outage-written ids: 0
+
+### App restarted: both outage writes caught up, checkpoint advanced exactly, no duplicates
+   evidence_activity rows: 167 (165 + 2, exactly)
+   EV-b5fccd41-1146-4797-a1c7-0118b4a257ae | CREATED | edd8ee3edbc66c810b84f1112d203bf8a6f19b392181054654f6af5cfa849b15
+   EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c | CREATED | d770c050342ba76fd1a804e05ffd51ba7d92251ec869f2b575c15d73014564d1
+   checkpoint block_number: 226 (224 + 2, exactly)
+
+### A further restart with NO new writes: every count unchanged (idempotency holds)
+   evidence_activity: 167  evidence_projection: 93  checkpoint block_number: 226
+   eventSync health: UP, consecutiveFailures=0
+
+### Regression: the whole Phase 2 checklist re-run with the listener active
+   scripts/live/live_phase2.sh exit 0; application log ERROR count: 0; script traceback count: 0
+```
+
+**Regression:** the whole Phase 2 checklist re-run with the listener active - 0 application `ERROR` lines, 0
+script tracebacks (verbatim in Appendix P4-G3).
+
 
 ## P2. Phase 2: evidence management (B1-B5, C1-C3) — run 2026-09-22
 
@@ -1902,4 +1986,231 @@ Error: unknown flag: --reason
    [a2spike-registrar-26683] 2026/09/21 20:20:49 [INFO] Successfully revoked certificates: [{Serial:5ec402c7572a1b540519
 
 (temporary client homes removed)
+```
+
+## Appendix P4-G3. G3 live verification, verbatim
+
+```
+### First-ever run (empty checkpoint): backfilled the whole ledger from block 0
+   eventSync health: UP, consecutiveFailures=0
+   evidence_activity rows: 164
+   evidence_projection rows: 90
+   ledger_sync_checkpoint block_number: 223
+
+### Register while the listener is running (collector, case FAB-G3-LIVE)
+   EVA=EV-a491efd6-96f5-438c-b8d6-2a6e9ca72646
+   evidence_activity row for EVA: action=CREATED txId=2d53e96449d81810bac088c23a4af86d74e4a6cb018bedb399c93b243252de56
+   (present within ~2s of the write, no polling needed)
+
+### App fully stopped (kills the listener)
+   evidence_activity rows before outage writes: 165
+   checkpoint block_number: 224
+### Enrolling a throwaway COLLECTOR identity (revoked at the end)
+### Writing EV-b5fccd41-1146-4797-a1c7-0118b4a257ae directly to the chaincode (Spring is stopped; this is exactly what it would miss)
+2026-09-22 05:09:15.083 UTC 0003 INFO [chaincodeCmd] chaincodeInvokeOrQuery -> Chaincode invoke successful. result: status:200 payload:"{\"txId\":\"edd8ee3edbc66c810b84f1112d203bf8a6f19b392181054654f6af5cfa849b15\",\"timestamp\":\"2026-09-22T05:09:13.024983443Z\",\"version\":1}" 
+### Writing EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c directly to the chaincode (Spring is stopped; this is exactly what it would miss)
+2026-09-22 05:09:17.266 UTC 0003 INFO [chaincodeCmd] chaincodeInvokeOrQuery -> Chaincode invoke successful. result: status:200 payload:"{\"txId\":\"d770c050342ba76fd1a804e05ffd51ba7d92251ec869f2b575c15d73014564d1\",\"timestamp\":\"2026-09-22T05:09:15.215636239Z\",\"version\":1}" 
+written ids:
+EV-b5fccd41-1146-4797-a1c7-0118b4a257ae
+EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c
+
+### While still stopped: confirmed Postgres has NOT changed (the outage really is invisible while down)
+   evidence_activity rows: 165 (unchanged)
+   evidence_projection rows for the two outage-written ids: 0
+
+### App restarted: both outage writes caught up, checkpoint advanced exactly, no duplicates
+   evidence_activity rows: 167 (165 + 2, exactly)
+   EV-b5fccd41-1146-4797-a1c7-0118b4a257ae | CREATED | edd8ee3edbc66c810b84f1112d203bf8a6f19b392181054654f6af5cfa849b15
+   EV-bcfd1e3b-4517-47de-bab2-8e0206a2ba0c | CREATED | d770c050342ba76fd1a804e05ffd51ba7d92251ec869f2b575c15d73014564d1
+   checkpoint block_number: 226 (224 + 2, exactly)
+
+### A further restart with NO new writes: every count unchanged (idempotency holds)
+   evidence_activity: 167  evidence_projection: 93  checkpoint block_number: 226
+   eventSync health: UP, consecutiveFailures=0
+
+### Regression: the whole Phase 2 checklist re-run with the listener active
+   scripts/live/live_phase2.sh exit 0; application log ERROR count: 0; script traceback count: 0
+```
+
+## Appendix P4-G3-R. Phase 2 checklist re-run with the G3 listener active, verbatim (`scripts/live/live_phase2.sh`)
+
+```
+collector user id (from /api/auth/me): f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+
+### E3 prerequisite: create the cases this checklist registers evidence under
+   case FAB-LIVE-1 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-2 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-3 -> 409 (200/201 created, 409 already exists from an earlier run)
+   case FAB-LIVE-4 -> 409 (200/201 created, 409 already exists from an earlier run)
+   register under an unknown case number -> 404  CASE_NOT_FOUND
+
+### B1/B2/C1 register DIGITAL evidence (metadata carries a FORGED collector, must be ignored)
+HTTP 201
+   evidenceId                 EV-6e12400c-6f7f-4755-b965-aaee81917958
+   status                     COLLECTED
+   version                    1
+   createdBy                  f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   currentCustodian           f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   fileCid                    bafkreia5j5oplrkdgmdxfvnu7fqmx2lwo6pjgqbngx4lwlud5a5gbqgej4
+   fileSha256                 1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   fileSize                   41
+   metadataAvailable          True
+   metadata.collectorId       f47ff616-80f2-4b54-b128-3b1b3fb6b8d0
+   verification.status        NOT_CHECKED
+   -> local sha256 of the file : 1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   -> ledger fileSha256        : 1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   -> createdBy == collector id from JWT? YES
+   -> stored bytes fetched from IPFS by the file CID == original? YES
+
+### B1 register PHYSICAL evidence (no file)
+HTTP 201
+   evidenceId                 EV-952a688f-8a97-49d4-83bd-be2f66115d16
+   evidenceType               PHYSICAL
+   fileCid                    None
+   fileSha256                 None
+   status                     COLLECTED
+   createdByRole              None
+
+### B3 retrieve by id, by file CID, by metadata CID
+200 HTTP by id (AUDITOR)
+   status                     COLLECTED
+   version                    1
+   metadata.description       Suspect phone image
+   verification.status        NOT_CHECKED
+200 HTTP by file CID
+   ids: ['EV-6e12400c-6f7f-4755-b965-aaee81917958']
+200 HTTP by metadata CID
+404 HTTP by unknown CID
+   error                      NOT_FOUND
+404 HTTP unknown id
+   error                      NOT_FOUND
+
+### C2 verify untouched evidence
+200 HTTP
+   status                     VERIFIED
+   ledgerVersion              1
+   file.result                VERIFIED
+   file.expectedSha256        1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   file.actualSha256          1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   metadata.result            VERIFIED
+
+### C2 DELIBERATE CORRUPTION: change one word inside the file's block on the IPFS node's disk, then restart the node
+   -> block file on the node: /data/ipfs/blocks/IT/CIQB2T246XCUGMYHOLK3J6LAZPUXM546SNAC2NPYXMXIH2B2MDAMITY.data
+   -> before: LIVE-EVIDENCE-1790053875-original-content
+   -> after : LIVE-EVIDENCE-1790053875-0RIGINAL-content
+   -> IPFS still answers a cat for the same CID (content-addressing did NOT catch it):
+   ->    cat -> LIVE-EVIDENCE-1790053875-0RIGINAL-content
+200 HTTP verify
+   status                     TAMPERED
+   file.result                TAMPERED
+   file.expectedSha256        1d4f5cf5c543330772d5b4f960cbe976779e93402d35f8bb2e83e83a60c0c44f
+   file.actualSha256          10342b276199b8b33c0ee2b939ebd74306278609fef52052fd625c6e01346d30
+   metadata.result            VERIFIED
+200 HTTP GET ?verify=true
+   verification.status        TAMPERED
+   status                     COLLECTED
+
+### C2 NOT_FOUND: register another item, delete its file block from the node's disk, restart
+removed-block
+200 HTTP verify (197 ms)
+   status                     NOT_FOUND
+   file.result                NOT_FOUND
+   file.actualSha256          None
+   metadata.result            VERIFIED
+
+### B4 versioned update (ANALYST), old version stays readable, stale update rejected
+200 HTTP update v1->v2
+   version                    2
+   lastAction                 METADATA_UPDATED
+   lastReason                 Location corrected after audit
+   metadata.location          Locker 9
+   metadata.description       Wallet
+   metadata.metadataVersion   2
+   metadata.previousMetadataCid bafkreid2xsuulp62tumjohgymq5q2svjfkdd2a2ht6nqutfexgcibi7o5u
+200 HTTP GET version 1 (old)
+   version                    1
+   metadata.location          Desk 2
+200 HTTP GET version 2
+   version                    2
+   metadata.location          Locker 9
+409 HTTP stale update (expectedVersion=1, record is at 2)
+   error                      VERSION_CONFLICT
+   message                    Expected version 1 but the record is at version 2
+400 HTTP blank reason
+   error                      VALIDATION_FAILED
+403 HTTP JUDGE update
+   error                      ACCESS_DENIED
+
+### C3 ledger history (tx ids and ledger timestamps)
+200 HTTP
+   v1  CREATED           tx=c73092d027b0b4ad..  at=2026-09-22T05:11:47.398392100Z  by=COLLECTOR reason=''
+   v2  METADATA_UPDATED  tx=b5dbddc15c27d95e..  at=2026-09-22T05:11:49.754853200Z  by=FORENSIC_ANALYST reason='Location corrected after audit'
+
+### B5 disposal: request (PROSECUTOR) -> COLLECTOR cannot approve -> stale approval rejected -> JUDGE approves
+200 HTTP request disposal
+   status                     COLLECTED
+   version                    2
+   disposal.state             PENDING
+   disposal.reason            Case closed by order 42/2026
+   lastAction                 DISPOSAL_REQUESTED
+403 HTTP COLLECTOR approve
+   error                      ACCESS_DENIED
+409 HTTP JUDGE approve with stale version
+   error                      VERSION_CONFLICT
+200 HTTP JUDGE approve
+   status                     DISPOSED
+   version                    3
+   disposal.state             NONE
+   lastAction                 DISPOSAL_APPROVED
+   lastReason                 Order verified
+409 HTTP update after DISPOSED
+   error                      INVALID_STATE
+   message                    Evidence is DISPOSED and can no longer change
+200 HTTP the DISPOSED record is still readable
+   status                     DISPOSED
+   version                    3
+200   history entries still on ledger: [(1, 'CREATED'), (2, 'DISPOSAL_REQUESTED'), (3, 'DISPOSAL_APPROVED')]
+
+### C-02: there is no delete
+   DELETE /api/evidence/{id} as collector -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as admin -> 405  METHOD_NOT_ALLOWED
+   DELETE /api/evidence/{id} as judge -> 405  METHOD_NOT_ALLOWED
+
+### A3 roles: who may register (403 for the rest)
+   collector -> 201
+   forensic-analyst -> 201
+   prosecutor -> 403
+   judge -> 403
+   auditor -> 403
+   admin -> 403
+
+### B2 upload limits and types
+   disallowed type (application/x-msdownload) -> 415  UNSUPPORTED_FILE_TYPE | File type 'application/x-msdownload' is not allowed
+   empty file for DIGITAL -> 400  FILE_REQUIRED
+   file on PHYSICAL evidence -> 400  FILE_NOT_ALLOWED
+   missing required metadata field -> 400  ['description', 'caseId']
+   60 MB file (limit 50 MB) -> 413  CONTENT_TOO_LARGE
+   20 MB file -> HTTP 201 in 3375 ms
+   -> local sha256 : 9f9a9e90f728073898bebac42b138f931349f8b4382efb6771a741b60f066c7f
+   -> ledger sha256: 9f9a9e90f728073898bebac42b138f931349f8b4382efb6771a741b60f066c7f   size=20000000
+200 HTTP verify of the 20 MB file
+   status                     VERIFIED
+   file.result                VERIFIED
+
+### F1 IPFS outage: ledger information survives, verify says 503 (not NOT_FOUND)
+200 HTTP GET during outage
+   status                     COLLECTED
+   version                    2
+   metadataAvailable          False
+   metadata                   None
+503 HTTP verify during outage
+   error                      STORAGE_UNAVAILABLE
+   message                    IPFS node not reachable while reading content
+   register during outage -> 503  STORAGE_UNAVAILABLE
+
+### G4 health with the reference ledger
+200 HTTP
+   overall: UP
+   ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+   ipfs   : {'status': 'UP'}
 ```

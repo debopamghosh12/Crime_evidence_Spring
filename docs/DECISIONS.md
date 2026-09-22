@@ -184,3 +184,26 @@ identity is within 30 days of its certificate's expiry.
 (`BE_REGISTRAR_SECRET`), passed to `scripts/fabric/enroll_users.sh` when enrolling users; the running backend never sees
 either secret. Reused the exact registrar shape already validated in the A2 spike (TEST_CHECKLIST Appendix P3-A) rather
 than re-deriving it.
+
+## D-051 — G3: two retry tiers, a real DB-backed checkpoint, evidence_activity does double duty (2026-09-22)
+Approved as designed (docs/G3_SYNC_DESIGN.md). Tier 1 (up to 3 attempts, fixed 200ms) retries only the DATABASE
+transaction for a Postgres blip, leaving the Fabric event stream open; tier 2 (exponential backoff, base 1s,
+factor 2, capped 30s, +/-20% jitter) tears down and reconnects the stream for anything else, including tier 1
+exhausted. Chosen over one uniform "any failure reconnects" policy: reopening a chaincode event subscription has
+real cost, so a sub-second Postgres hiccup should not pay for it. The checkpoint is a Postgres row, updated in the
+SAME transaction as the read-model write it protects (not the Fabric SDK's own FileCheckpointer/InMemoryCheckpointer,
+neither of which can be atomic with a Postgres write). `evidence_activity` is both the idempotency log (UNIQUE
+tx_id) and the H3 feed source - one table, not two, since every processed event is already a feed-worthy row.
+
+## D-052 — G3 health: a NEW `eventSync` actuator component, DOWN only after 5 consecutive stream-level failures (2026-09-22)
+UNKNOWN before the first connection (matches LedgerHealthIndicator's honesty), UP once connected with fewer than 5
+consecutive tier-2 failures since, DOWN at 5 (by then backoff has reached or is near its 30s cap - roughly a
+minute of sustained failure, not a transient blip). DOWN is an observability signal only: the loop never stops
+retrying underneath it (design section 6). Rejected: counting tier-1 (local DB) retries toward this threshold -
+they are invisible to it on purpose, since they represent a different failure mode (design section 9).
+
+## D-053 — G3 first-ever run replays the whole ledger from block 0 (2026-09-22)
+An empty checkpoint (block_number IS NULL) means "start from block 0", not "start from now": the read model must
+reflect ALL existing evidence on first startup, not only future writes, given the ledger already holds real data
+from every prior phase's live verification. Verified live: the first run against the real chain backfilled 164
+activity rows / 90 projection rows in one pass (TEST_CHECKLIST P4-G3).

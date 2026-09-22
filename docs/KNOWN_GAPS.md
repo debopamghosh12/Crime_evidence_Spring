@@ -2,7 +2,7 @@
 
 **Purpose.** An honest list of what is NOT tested, NOT built, or only partly true, so the report and the demo claim nothing that
 was not done (FEATURE_LIST.md: "keep an honest split so nothing is claimed that is not built"). Every entry names where the detail
-lives. Last updated 2026-09-22 (Phase 3 D1-D3/E1-E3 and A2 built and owner-approved). Update this file whenever a gap is closed or a new one is found; never delete an
+lives. Last updated 2026-09-22 (Phase 3 complete; Phase 4 G3 built and owner-approved, H1-H4/A6 not yet). Update this file whenever a gap is closed or a new one is found; never delete an
 entry silently, mark it resolved with the date.
 
 ## A. Deliberately left UNTESTED (owner decision 2026-09-22)
@@ -35,17 +35,24 @@ These were considered, judged out of scope for the final-year deliverable, and a
 | **Orphaned IPFS pins** are possible when a register fails during a ledger outage (compensation refuses to unpin what it cannot confirm) | ACCEPTED by design; no reconciliation sweep | DECISIONS D-024, D-037 |
 | No automatic retry on Fabric MVCC conflicts (F5); a conflict is returned as 409 | NOT BUILT (Phase 5) | D-024 |
 | No scheduled integrity sweep (C5); verification is on demand only | NOT BUILT (stretch) | C2 write-up |
-| Chaincode events are emitted and unit-tested but nothing consumes them (no Postgres sync, search, dashboard, notifications: G3, H1-H4, Phase 4) | NOT BUILT | CHAINCODE_DESIGN section 6 |
+| Chaincode events now consumed and synced to Postgres (G3, 2026-09-22); H1-H4 (search, dashboard, feed, notifications) still read nothing from the resulting schema yet | G3 BUILT, H1-H4 NOT BUILT | docs/features/g3-ledger-event-sync.md |
 | Ledger test data is permanent (Fabric ledgers cannot be edited): case ids `FAB-DIRECT`, `FAB-WIRE`, `FAB-LIVE-*`; channel height 48 -> 93 | ACCEPTED; recreating the network removes it | FABRIC_RUNBOOK section 7 |
 | Certificate expiry/rotation on the Fabric side, channel-level revocation lists | NOT ADDRESSED | A2 design |
 | No automated integration test against a real PostgreSQL or a real Fabric network in CI (verification is by documented live runs); no CI at all (L4) | NOT BUILT | D-012, TEST_CHECKLIST |
 
 ## D. Functional gaps (features not yet built, from FEATURE_LIST.md)
 
-Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Then Phase 4 (G3, H1-H4, A6)
-and Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
+Phase 3 built: D1, D2, D3, E1, E2, E3, A2 (2026-09-22 - all of Phase 3). Still open: D4 (optional). Phase 4 in progress: G3 built (2026-09-22); H1-H4, A6 not yet. Then Phase 5 (I1, F2-F5, L1-L3, K2). A4 (admin user management) and A5 (case-level access) appear in no build phase; users exist
 only through the dev seeder, all 6 of whom are now A2-enrolled (`scripts/fabric/enroll_users.sh`); a user added once A4 exists
 would need the same enrollment step run for them before their first write (docs/FABRIC_RUNBOOK.md section 8).
+
+G3 specifics:
+- **Single active listener instance:** no coordination (e.g. a Postgres advisory lock) for running more than one;
+  fine at this project's scale, would race on the checkpoint if ever run clustered.
+- **One `GetHistory` ledger read per event**, cost growing with an item's version count over its lifetime; a
+  chaincode function returning one specific version would be more efficient but does not exist (out of scope, touches the chaincode).
+- **The `eventSync` health DOWN threshold (5 consecutive failures) is a fixed constant**, not configurable per environment.
+
 
 Phase 3 specifics, all found while building it:
 - **No user-lookup endpoint:** a client must already know a receiver's user id to start a custody transfer, and the custody timeline shows
@@ -68,6 +75,8 @@ Phase 3 specifics, all found while building it:
   safety (exactly one winner), ledger outage handling and recovery, restart persistence, the chaincode's own role and state checks
   (driven directly through the peer CLI); custody transfer, status changes, cases, evidence-case links; A2 - every write now
   signed with the actor's own certificate (`qscc` shows the correct creator), the pre-A2 identity and mismatched-certificate
-  cases refused through the peer CLI with real enrolled identities (TEST_CHECKLIST Appendix P3-A2).
+  cases refused through the peer CLI with real enrolled identities (TEST_CHECKLIST Appendix P3-A2). G3 - a first-ever run backfilling the
+  whole ledger from block 0, writes made directly to the chaincode while the application was fully stopped and
+  correctly caught up (with no duplicates) on restart, a redundant restart producing no double-processing.
 - **Verified only against a fake or in-memory stand-in:** chaincode events; the Java service against an unavailable orderer/other org.
 - **Not verified at all:** section A above, the A2 residuals in section B, and everything in sections B-D marked OPEN or NOT BUILT.
