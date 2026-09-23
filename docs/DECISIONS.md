@@ -809,3 +809,21 @@ instead of the assumption carried over from the transfer-decision pattern.
 4. Confirmed via a direct `GET /api/evidence/{id}/history` call that all 5 real versions (CREATED,
    TRANSFER_INITIATED, TRANSFER_ACCEPTED, DISPOSAL_REQUESTED, DISPOSAL_APPROVED) - each with a real transaction
    id, correct actor/role, and real timestamp - match the frontend's Version History table exactly, row for row.
+
+## D-078
+
+**Frontend integration: case officer add/remove (E2, Part C), verified live against real Fabric.** Added to
+the case detail page: a user-id + `CaseRole` select "Add" control (`CASE_ROLES` excludes `LEAD_OFFICER` -
+matching the backend's own rejection of it there; a lead is set through the case's `leadOfficerId` instead) and
+a per-row remove button, hidden only for the `LEAD_OFFICER` row itself (removing a lead this way is rejected
+server-side too - "assign a different lead first"). Both actions replace `caseData` with the response body
+directly (`CaseResponse` already reflects the change), no extra re-fetch needed.
+
+**Verified live** (as PROSECUTOR, against the real Fabric-backed server): added FORENSIC_ANALYST as INVESTIGATOR
+to `FE-CASE-002` - appeared immediately with a remove control, cross-checked with a direct
+`GET /api/cases/{id}` call showing the real member row (`addedBy` = the real acting PROSECUTOR's id). Removed
+the same member - back to a team of one (the lead officer only), cross-checked again directly - the member row
+gone entirely, not just hidden. This is the F3 re-wrap/revoke path (the description text on the page states
+it) - not independently re-verified here since F2/F3's re-wrap/revoke behavior was already proven live when
+F2/F3 itself was built (D-062 era); this pass only confirms the add/remove membership mechanism itself works
+end to end through the real UI.

@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Pencil, Check, X, FileText, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Pencil, Check, X, FileText, Users, UserPlus, UserMinus } from "lucide-react";
+
+// Matches com.blockevidence.backend.domain.CaseRole exactly, minus LEAD_OFFICER - that one is set
+// through the case's own leadOfficerId (E1's update), never through addMember (backend rejects it).
+const CASE_ROLES = ["INVESTIGATOR", "FORENSIC_ANALYST", "PROSECUTOR", "OBSERVER"];
 
 // Matches com.blockevidence.backend.dto.CaseResponse exactly. members/createdBy/leadOfficerId are
 // plain user ids (no user-lookup endpoint, A4 was never built). No "crimeBoxes" - that concept has no
@@ -50,6 +54,47 @@ export default function CaseDetailPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [caseId]);
+
+  // Case officer add/remove (E2, Part C). Role: ADMIN or PROSECUTOR (Permissions.MANAGE_CASES) - shown
+  // to every role and left to the backend to refuse, same principle as disposal decide.
+  const [newMemberId, setNewMemberId] = useState("");
+  const [newMemberRole, setNewMemberRole] = useState(CASE_ROLES[0]);
+  const [memberActionLoading, setMemberActionLoading] = useState<string | null>(null);
+  const [memberError, setMemberError] = useState("");
+
+  const addMember = async () => {
+    if (!newMemberId.trim() || !caseData) return;
+    setMemberActionLoading("add");
+    setMemberError("");
+    try {
+      const r = await api.post(`/api/cases/${caseId}/members`, {
+        userId: newMemberId,
+        caseRole: newMemberRole,
+      });
+      setCaseData(r.data);
+      setNewMemberId("");
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      setMemberError(err.response?.data?.message || "Failed to add member.");
+    } finally {
+      setMemberActionLoading(null);
+    }
+  };
+
+  const removeMember = async (targetUserId: string) => {
+    if (!caseData) return;
+    setMemberActionLoading(targetUserId);
+    setMemberError("");
+    try {
+      const r = await api.delete(`/api/cases/${caseId}/members/${targetUserId}`);
+      setCaseData(r.data);
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      setMemberError(err.response?.data?.message || "Failed to remove member.");
+    } finally {
+      setMemberActionLoading(null);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -129,7 +174,7 @@ export default function CaseDetailPage() {
         </div>
       </div>
 
-      {/* Team */}
+      {/* Team (E2) */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" /> Team ({caseData.members.length})
@@ -138,10 +183,50 @@ export default function CaseDetailPage() {
           {caseData.members.map(m => (
             <div key={m.userId} className="flex items-center justify-between p-3 rounded-lg border border-border bg-background">
               <span className="text-sm font-mono text-foreground">{m.userId}</span>
-              <span className="text-xs px-2 py-0.5 rounded-full border border-border text-muted-foreground">{m.caseRole}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs px-2 py-0.5 rounded-full border border-border text-muted-foreground">{m.caseRole}</span>
+                {m.caseRole !== "LEAD_OFFICER" && (
+                  <button
+                    onClick={() => removeMember(m.userId)}
+                    disabled={memberActionLoading === m.userId}
+                    title="Remove from case"
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                  >
+                    {memberActionLoading === m.userId ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserMinus className="h-4 w-4" />}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
+        <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-border">
+          <input
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+            placeholder="User ID (UUID) to add"
+            value={newMemberId}
+            onChange={e => setNewMemberId(e.target.value)}
+          />
+          <select
+            className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+            value={newMemberRole}
+            onChange={e => setNewMemberRole(e.target.value)}
+          >
+            {CASE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <button
+            onClick={addMember}
+            disabled={memberActionLoading === "add" || !newMemberId.trim()}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+          >
+            {memberActionLoading === "add" ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+            Add
+          </button>
+        </div>
+        {memberError && <p className="text-sm text-destructive">{memberError}</p>}
+        <p className="text-xs text-muted-foreground">
+          Role: ADMIN or PROSECUTOR. Adding/removing also re-wraps/revokes F2/F3 content-key access to
+          every evidence item already linked to this case.
+        </p>
       </div>
 
       {/* Evidence linked to this case (E3) */}
