@@ -785,3 +785,27 @@ page(s)"). Rather than stop at "a PDF downloaded," decompressed its internal str
 report is built from real ledger data, not a template with placeholder values. This closes Part A: every item
 in the owner's original order (auth, evidence register/view, custody transfer, cases, dashboard,
 notifications/activity, verify, report) is now wired and verified live against the real Fabric-backed backend.
+
+## D-077
+
+**Frontend integration: Part C, disposal request/approve UI + version history, verified live against real
+Fabric in both authorization directions.** Added to the evidence detail page: a "Request Disposal" action
+(COLLECTOR/PROSECUTOR), a pending-disposal banner with Approve/Reject shown to EVERY role rather than hidden
+behind a client-side role check (so a non-JUDGE clicking it gets a real 403 back, same principle as every other
+authorization check in this app), and a Version History table from the real `GET /api/evidence/{id}/history`
+(C3, the ledger's own history - not the off-chain projection).
+
+**A real bug found live, not assumed**: the first Approve attempt (correctly, as PROSECUTOR, to set up the
+403 test) came back `"Request validation failed"`, not a 403 - `DisposalDecisionBody.note` is `@NotBlank`
+(mandatory), unlike `TransferDecisionBody.note` (genuinely optional) which this code was modeled on. Fixed by
+requiring the note client-side too (disabled buttons until filled), matching the backend's real constraint
+instead of the assumption carried over from the transfer-decision pattern.
+
+**Verified live, both directions, exactly as asked:**
+1. Requested disposal as PROSECUTOR on `EV-f6f47820...` (v3->v4, `DISPOSAL_REQUESTED` on the real ledger).
+2. Attempted Approve as PROSECUTOR (non-JUDGE) - real 403, "only a JUDGE may approve or reject a disposal
+   request" - **cross-checked with a direct `curl` call bypassing the UI entirely, also 403.**
+3. Logged in as JUDGE, approved with a note - status became DISPOSED (v4->v5) against real Fabric.
+4. Confirmed via a direct `GET /api/evidence/{id}/history` call that all 5 real versions (CREATED,
+   TRANSFER_INITIATED, TRANSFER_ACCEPTED, DISPOSAL_REQUESTED, DISPOSAL_APPROVED) - each with a real transaction
+   id, correct actor/role, and real timestamp - match the frontend's Version History table exactly, row for row.

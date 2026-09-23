@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import {
     ArrowLeft,
     MapPin,
@@ -15,7 +16,8 @@ import {
     FileText,
     History,
     Loader2,
-    Download
+    Download,
+    Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -60,13 +62,40 @@ interface VerificationResponse {
     metadata: { cid: string; expectedSha256: string; actualSha256: string; result: string } | null;
 }
 
+// Matches com.blockevidence.backend.dto.HistoryEntryResponse exactly (GET /api/evidence/{id}/history, C3).
+// txId/timestamp are the LEDGER's, not the server's.
+interface HistoryEntry {
+    version: number;
+    txId: string;
+    timestamp: string;
+    action: string;
+    status: string;
+    metadataCid: string;
+    actorId: string;
+    actorRole: string;
+    reason: string;
+}
+
 export default function EvidenceDetailPage() {
     const params = useParams();
     const id = params.id as string;
     const userId = params.userId as string;
+    const { user } = useAuth();
     const [evidence, setEvidence] = useState<EvidenceDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+
+    // Version history (C3) - real, from the ledger's own GetHistoryForKey, not the off-chain projection.
+    const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
+
+    const fetchHistory = async () => {
+        try {
+            const response = await api.get(`/api/evidence/${id}/history`);
+            setHistory(response.data);
+        } catch (e) { console.error(e); }
+        finally { setHistoryLoading(false); }
+    };
 
     // Transfer Modal State (D2 step 1 of 2 - initiate; see custody/page.tsx for step 2, accept/reject)
     const [transferModalOpen, setTransferModalOpen] = useState(false);
@@ -89,6 +118,7 @@ export default function EvidenceDetailPage() {
     useEffect(() => {
         if (id) {
             fetchEvidence();
+            fetchHistory();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
@@ -114,6 +144,68 @@ export default function EvidenceDetailPage() {
             setTransferError(err.response?.data?.message || "Transfer failed");
         } finally {
             setTransferLoading(false);
+        }
+    };
+
+    // Disposal (B5): request (COLLECTOR/PROSECUTOR) is step 1, approve/reject (JUDGE only) is step 2 -
+    // the ONLY path to DISPOSED status. Nothing is ever deleted (C-02) - status only.
+    const [disposalModalOpen, setDisposalModalOpen] = useState(false);
+    const [disposalReason, setDisposalReason] = useState("");
+    const [disposalLoading, setDisposalLoading] = useState(false);
+    const [disposalError, setDisposalError] = useState("");
+
+    const handleRequestDisposal = async () => {
+        if (!disposalReason || !evidence) return;
+        setDisposalLoading(true);
+        setDisposalError("");
+        try {
+            await api.post(`/api/evidence/${id}/disposal`, {
+                expectedVersion: evidence.version,
+                reason: disposalReason,
+            });
+            setDisposalModalOpen(false);
+            setDisposalReason("");
+            await Promise.all([fetchEvidence(), fetchHistory()]);
+        } catch (error: unknown) {
+            const err = error as { response?: { data?: { message?: string } } };
+            setDisposalError(err.response?.data?.message || "Disposal request failed");
+        } finally {
+            setDisposalLoading(false);
+        }
+    };
+
+    const [decisionNote, setDecisionNote] = useState("");
+    const [decisionLoading, setDecisionLoading] = useState<"approve" | "reject" | null>(null);
+    const [decisionError, setDecisionError] = useState("");
+    const [decisionSuccess, setDecisionSuccess] = useState("");
+
+    const handleDisposalDecision = async (decision: "approve" | "reject") => {
+        if (!evidence || !decisionNote.trim()) return;
+        setDecisionLoading(decision);
+        setDecisionError("");
+        setDecisionSuccess("");
+        try {
+            // Role: JUDGE only (Permissions.DECIDE_DISPOSAL) - any other role gets a real 403 here,
+            // surfaced below rather than hidden, matching every other authorization check in this app.
+            // Unlike TransferDecisionBody's optional note, DisposalDecisionBody.note is @NotBlank -
+            // mandatory, found live (a real 400 "Request validation failed" the first time this was
+            // tried without one), not the 403 expected - fixed by requiring it here too.
+            await api.post(`/api/evidence/${id}/disposal/${decision}`, {
+                expectedVersion: evidence.version,
+                note: decisionNote,
+            });
+            setDecisionNote("");
+            setDecisionSuccess(decision === "approve" ? "Disposal approved - status is now DISPOSED." : "Disposal rejected - status unchanged.");
+            await Promise.all([fetchEvidence(), fetchHistory()]);
+        } catch (error: unknown) {
+            const err = error as { response?: { status?: number; data?: { message?: string } } };
+            if (err.response?.status === 403) {
+                setDecisionError("403 Forbidden - only a JUDGE may approve or reject a disposal request.");
+            } else {
+                setDecisionError(err.response?.data?.message || `Disposal ${decision} failed`);
+            }
+        } finally {
+            setDecisionLoading(null);
         }
     };
 
@@ -264,6 +356,42 @@ export default function EvidenceDetailPage() {
                 </div>
             )}
 
+            {/* Disposal Request Modal (B5, step 1 of 2) */}
+            {disposalModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
+                        <h3 className="text-lg font-bold text-foreground">Request Disposal</h3>
+                        <p className="text-sm text-muted-foreground mb-4">
+                            Step 1 of 2: nothing is removed - status only changes once a JUDGE approves below.
+                        </p>
+                        <div className="space-y-4">
+                            <textarea
+                                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-ring"
+                                placeholder="Reason for disposal (mandatory)"
+                                value={disposalReason}
+                                onChange={e => setDisposalReason(e.target.value)}
+                            />
+                            {disposalError && <p className="text-sm text-destructive">{disposalError}</p>}
+                        </div>
+                        <div className="mt-6 flex justify-end gap-3">
+                            <button
+                                onClick={() => setDisposalModalOpen(false)}
+                                className="px-4 py-2 text-sm font-medium hover:bg-muted rounded-md"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleRequestDisposal}
+                                disabled={disposalLoading || !disposalReason}
+                                className="px-4 py-2 text-sm font-medium bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 disabled:opacity-50"
+                            >
+                                {disposalLoading ? "Submitting..." : "Submit Request"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
@@ -308,6 +436,14 @@ export default function EvidenceDetailPage() {
                     >
                         Request Transfer
                     </button>
+                    {evidence.disposal?.state !== "PENDING" && evidence.status !== "DISPOSED" && (
+                        <button
+                            onClick={() => setDisposalModalOpen(true)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium border border-destructive/30 text-destructive rounded-md hover:bg-destructive/10"
+                        >
+                            <Trash2 className="h-4 w-4" /> Request Disposal
+                        </button>
+                    )}
                     {evidence.evidenceType === "DIGITAL" && evidence.fileCid && (
                         <button
                             onClick={handleDownload}
@@ -334,6 +470,48 @@ export default function EvidenceDetailPage() {
                     </button>
                 </div>
             </div>
+
+            {/* Pending disposal decision (B5, step 2 of 2 - JUDGE only). Shown to every role so a
+                non-Judge clicking Approve/Reject gets a real 403 back, same as every other
+                authorization check in this app - not hidden by a client-side role guess. */}
+            {evidence.disposal?.state === "PENDING" && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-6 space-y-3">
+                    <h3 className="font-semibold text-foreground flex items-center gap-2">
+                        <Trash2 className="h-4 w-4 text-amber-500" /> Disposal request pending
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                        Requested by <span className="font-mono">{evidence.disposal.requestedBy}</span>:
+                        &quot;{evidence.disposal.reason}&quot;
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                        You are logged in as {user?.role} - only JUDGE may decide this.
+                    </p>
+                    <input
+                        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                        placeholder="Decision note (mandatory)"
+                        value={decisionNote}
+                        onChange={e => setDecisionNote(e.target.value)}
+                    />
+                    {decisionError && <p className="text-sm text-destructive">{decisionError}</p>}
+                    {decisionSuccess && <p className="text-sm text-green-500">{decisionSuccess}</p>}
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => handleDisposalDecision("approve")}
+                            disabled={decisionLoading !== null || !decisionNote.trim()}
+                            className="px-4 py-2 text-sm font-medium bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 disabled:opacity-50"
+                        >
+                            {decisionLoading === "approve" ? "Approving..." : "Approve (JUDGE only)"}
+                        </button>
+                        <button
+                            onClick={() => handleDisposalDecision("reject")}
+                            disabled={decisionLoading !== null || !decisionNote.trim()}
+                            className="px-4 py-2 text-sm font-medium border border-border rounded-md hover:bg-muted disabled:opacity-50"
+                        >
+                            {decisionLoading === "reject" ? "Rejecting..." : "Reject (JUDGE only)"}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {downloadError && (
                 <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
@@ -499,6 +677,52 @@ export default function EvidenceDetailPage() {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* Version history (C3) - real, from the ledger's own history, not the off-chain projection. */}
+            <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
+                <h2 className="mb-4 flex items-center text-lg font-semibold">
+                    <History className="mr-2 h-5 w-5 text-primary" />
+                    Version History ({history.length})
+                </h2>
+                {historyLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading...</p>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                            <thead className="border-b border-border text-xs text-muted-foreground">
+                                <tr>
+                                    <th className="py-2 pr-4 font-medium">v</th>
+                                    <th className="py-2 pr-4 font-medium">Action</th>
+                                    <th className="py-2 pr-4 font-medium">Status</th>
+                                    <th className="py-2 pr-4 font-medium">Actor</th>
+                                    <th className="py-2 pr-4 font-medium">Reason</th>
+                                    <th className="py-2 pr-4 font-medium">Timestamp</th>
+                                    <th className="py-2 font-medium">Transaction ID</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border">
+                                {history.map(h => (
+                                    <tr key={h.version}>
+                                        <td className="py-2 pr-4 font-mono">{h.version}</td>
+                                        <td className="py-2 pr-4">{h.action}</td>
+                                        <td className="py-2 pr-4">{h.status}</td>
+                                        <td className="py-2 pr-4 font-mono text-xs" title={h.actorId}>
+                                            {h.actorId.substring(0, 8)}... ({h.actorRole})
+                                        </td>
+                                        <td className="py-2 pr-4 text-muted-foreground italic max-w-xs truncate" title={h.reason}>
+                                            {h.reason || "-"}
+                                        </td>
+                                        <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">
+                                            {new Date(h.timestamp).toLocaleString()}
+                                        </td>
+                                        <td className="py-2 font-mono text-xs text-muted-foreground break-all">{h.txId}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
         </div>
     );
