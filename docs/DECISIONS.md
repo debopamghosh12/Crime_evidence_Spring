@@ -871,3 +871,22 @@ still went nowhere.
 
 **Verified live**: `/register` now returns Next.js's own 404 (confirmed via screenshot) instead of rendering a
 form that would fail; the landing page's two CTAs both land on the real, working `/login`.
+
+## D-081
+
+**Final pass found a third real gap: Sign Out never called the backend's real logout endpoint at all.**
+`AuthContext.logout()` only ever cleared `sessionStorage` and redirected - `POST /api/auth/logout` (which
+revokes the refresh token server-side, per its own doc comment) was never called from anywhere in the frontend.
+Not a dead click (the button visibly worked - session cleared, redirected to `/login`), but a real functional
+gap: the refresh token stayed valid on the server indefinitely after a "logout," reachable by anyone who had
+captured it beforehand. Fixed by calling the real endpoint with the stored refresh token before clearing local
+state (fire-and-forget - local state clears either way, matching the endpoint's own "204 either way" contract).
+
+**Verified live, and the same real API bug from D-070 (single-use refresh-token rotation) had to be worked
+around to verify it properly**: the first verification attempt called `/api/auth/refresh` directly to "check" a
+token before logout, which itself consumed it (rotation) - a self-inflicted false result, caught and redone
+correctly. Redone cleanly: captured a freshly-issued refresh token into a page-level JS variable (kept
+Claude-in-Chrome's own secret-value guard from blocking the raw token in a tool result - only status codes were
+ever returned), clicked the real Sign Out button, confirmed via `read_network_requests` that a real
+`POST /api/auth/logout` fired and returned 204, then confirmed the captured token now gets a real `401` from
+`/api/auth/refresh` - the token is genuinely revoked server-side, not just forgotten client-side.

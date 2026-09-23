@@ -62,6 +62,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     const logout = () => {
+        // POST /api/auth/logout revokes the refresh token server-side (204 either way, per its own
+        // docs - never confirms whether the token existed). Found live: this was previously
+        // client-side only, so a "logged out" refresh token stayed valid on the server indefinitely.
+        // Fire-and-forget: local state is cleared regardless of whether this call succeeds.
+        const refreshToken = sessionStorage.getItem("refreshToken");
+        if (refreshToken) {
+            api.post("/api/auth/logout", { refreshToken }).catch(() => { /* logging out anyway */ });
+        }
         setAccessToken(null);
         setUser(null);
         sessionStorage.removeItem("accessToken");
