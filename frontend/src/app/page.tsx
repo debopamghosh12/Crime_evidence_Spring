@@ -105,8 +105,10 @@ function Hero() {
             Access System
             <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
           </Link>
-          <Link href="/auth/register" className="px-8 py-4 border border-border bg-card/50 backdrop-blur text-foreground text-lg font-medium rounded-full hover:bg-card hover:border-primary/50 transition-all duration-300">
-            Request Account
+          {/* Self-registration was never backed by a real endpoint (see frontend/README.md "Cut
+              entirely") - this CTA points at the real entry point instead of a dead route. */}
+          <Link href="/login" className="px-8 py-4 border border-border bg-card/50 backdrop-blur text-foreground text-lg font-medium rounded-full hover:bg-card hover:border-primary/50 transition-all duration-300">
+            Sign In
           </Link>
         </div>
       </div>
@@ -271,10 +273,10 @@ function FooterCTA() {
           Join the agencies already securing their chain of custody on BlockEvidence.
         </p>
         <Link
-          href="/auth/register"
+          href="/login"
           className="inline-flex items-center justify-center px-10 py-5 bg-foreground text-background text-xl font-bold rounded-full hover:scale-110 transition-transform duration-300"
         >
-          Get Started Now
+          Sign In
         </Link>
       </div>
     </div>

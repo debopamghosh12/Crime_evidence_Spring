@@ -851,3 +851,23 @@ real 403 rendered on the page; as ADMIN, returned a real, populated table - and 
 that this page is genuinely live: **it showed the exact `ACCESS_DENIED` entries generated moments earlier by
 the PROSECUTOR 403 test on this same endpoint**, timestamped seconds apart, a self-referential confirmation
 that could not have come from a mock.
+
+## D-080
+
+**Final-pass sweep found two more real dead-click leftovers, both fixed before the button-to-endpoint table was
+written.** A repo-wide grep for stale patterns (`axios` imports, `/api/v1/` paths, the `:3000`/`:3001`
+fallbacks) turned up `app/register/page.tsx` - the self-registration PAGE FILE itself, still live at `/register`
+with its original `/api/v1/auth/register` call, even though the login page's link to it was already removed
+back when auth was first wired. A route with no incoming link is still a real, directly-navigable dead page
+(confirmed: visiting `/register` before this fix still rendered the broken form) - Part B's "remove entirely"
+meant the page, not just the link to it. Deleted outright.
+
+**A second gap the grep alone didn't catch, found by reading the file**: the public landing page
+(`app/page.tsx`, never touched by any earlier pass since it makes no API calls of its own) had two marketing
+CTAs ("Request Account", "Get Started Now") linking to `/auth/register` - a path that never existed in this
+project even before today, a pre-existing dead link in the source repo itself. Repointed both to `/login`, the
+only real entry point, rather than leave a marketing page as the one remaining place in the app where a click
+still went nowhere.
+
+**Verified live**: `/register` now returns Next.js's own 404 (confirmed via screenshot) instead of rendering a
+form that would fail; the landing page's two CTAs both land on the real, working `/login`.
