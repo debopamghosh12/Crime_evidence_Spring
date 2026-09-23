@@ -827,3 +827,27 @@ gone entirely, not just hidden. This is the F3 re-wrap/revoke path (the descript
 it) - not independently re-verified here since F2/F3's re-wrap/revoke behavior was already proven live when
 F2/F3 itself was built (D-062 era); this pass only confirms the add/remove membership mechanism itself works
 end to end through the real UI.
+
+## D-079
+
+**Frontend integration: Audit Log for ADMIN (A6, the last Part C item), verified live in both authorization
+directions - plus a real dead-click found and fixed along the way, outside the original four.** Added a new
+`audit/page.tsx` against the real `AuditLogResponse`/`PageResponse` (`GET /api/audit`), shown to every role in
+the nav (a non-ADMIN/AUDITOR gets a real 403 rendered on the page itself, same principle as every other
+authorization check this pass).
+
+**Found while doing the final click-through prep, not assumed away**: `analytics/page.tsx` was a second,
+separate stats page (distinct from the dashboard rewired in D-073) still on the original source-repo code
+entirely - bare `axios`, the dead `:3000` fallback, and fields (`totalCases`, `totalLabs`,
+`pendingAccessRequests`, `unreadNotifications`, `evidenceOverTime`) that don't exist on `DashboardResponse` at
+all. It was reachable from the nav and would have been a genuine dead page in the final pass. Rewired to the
+same real `DashboardResponse` as the dashboard, added a real `totalCases` (the length of `GET /api/cases`, since
+no dedicated field exists), and dropped every field with no backend source rather than inventing one.
+
+**Verified live, both directions:** Analytics as PROSECUTOR rendered three real `recharts` charts (a 30-day
+activity line, evidence-by-type bar, evidence-by-status pie) with real, non-trivial numbers (117 evidence, 17
+cases, an 85/32 physical/digital split) matching earlier checkpoints exactly. Audit Log as PROSECUTOR returned a
+real 403 rendered on the page; as ADMIN, returned a real, populated table - and the single best proof available
+that this page is genuinely live: **it showed the exact `ACCESS_DENIED` entries generated moments earlier by
+the PROSECUTOR 403 test on this same endpoint**, timestamped seconds apart, a self-referential confirmation
+that could not have come from a mock.

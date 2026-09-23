@@ -9,13 +9,13 @@ import {
     FileText,
     Activity,
     LogOut,
-    User,
     Menu,
     X,
     FolderOpen,
     BarChart2,
     Bell,
     Rss,
+    ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FingerprintLogo } from "@/components/ui/FingerprintLogo";
@@ -56,6 +56,9 @@ export default function DashboardLayout({
         { name: "Analytics", href: `/dashboard/${userId}/analytics`, icon: BarChart2 },
         { name: "Activity Feed", href: `/dashboard/${userId}/activity`, icon: Rss },
         { name: "Notifications", href: `/dashboard/${userId}/notifications`, icon: Bell },
+        // Shown to every role, same principle as every other authorization check in this app - a
+        // non-ADMIN/AUDITOR gets a real 403 back from the page itself, not hidden by a client-side guess.
+        { name: "Audit Log", href: `/dashboard/${userId}/audit`, icon: ShieldAlert },
     ];
 
     return (

@@ -1,36 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import axios from "axios";
-import { useAuth } from "@/context/AuthContext";
-import { useParams } from "next/navigation";
-import { BarChart2, FileText, Clock, Layers, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import api from "@/lib/api";
+import { BarChart2, FileText, Layers } from "lucide-react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from "recharts";
 import LottieLoader from "@/components/ui/LottieLoader";
 
-interface Stats {
+// Matches com.blockevidence.backend.dto.DashboardResponse exactly (GET /api/dashboard, H2). Fields the
+// source repo's stats page invented (totalCases, totalLabs, pendingAccessRequests, unreadNotifications)
+// have no backend equivalent and are not shown here - only real fields, from a real endpoint.
+interface DashboardStats {
   totalEvidence: number;
-  pendingTransfers: number;
-  totalCases: number;
-  totalLabs: number;
-  pendingAccessRequests: number;
-  unreadNotifications: number;
-  evidenceByStatus: { status: string; count: number }[];
-  evidenceByType: { type: string; count: number }[];
-  evidenceOverTime: { date: string; count: number }[];
+  byStatus: Record<string, number>;
+  byType: Record<string, number>;
+  byCase: Record<string, number>;
+  activityByDay: { date: string; count: number }[];
 }
 
-const PIE_COLORS = ["#22c55e", "#16a34a", "#4ade80", "#86efac", "#bbf7d0"];
+const PIE_COLORS = ["#22c55e", "#16a34a", "#4ade80", "#86efac", "#bbf7d0", "#f87171"];
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface TooltipPayloadItem { name: string; value: number; color: string }
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: TooltipPayloadItem[]; label?: string }) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-card border border-border rounded-lg px-3 py-2 text-xs shadow-lg">
       <p className="text-muted-foreground mb-1">{label}</p>
-      {payload.map((p: any) => (
+      {payload.map((p) => (
         <p key={p.name} style={{ color: p.color }} className="font-medium">{p.name}: {p.value}</p>
       ))}
     </div>
@@ -38,19 +36,24 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function AnalyticsPage() {
-  const { token } = useAuth();
-  const params = useParams();
-  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [totalCases, setTotalCases] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!token) return;
-    axios.get(`${API}/api/v1/stats`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setStats(r.data))
+    Promise.all([
+      api.get("/api/dashboard"),
+      // Total cases has no field on DashboardResponse - GET /api/cases is a bare array, so its length
+      // is the real count, not a fabricated one.
+      api.get("/api/cases").catch(() => ({ data: [] })),
+    ])
+      .then(([statsRes, casesRes]) => {
+        setStats(statsRes.data);
+        setTotalCases(casesRes.data.length);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   if (loading) {
     return <div className="flex items-center justify-center h-64"><LottieLoader size={200} /></div>;
@@ -58,13 +61,12 @@ export default function AnalyticsPage() {
 
   if (!stats) return <p className="text-muted-foreground text-center mt-12">Failed to load analytics.</p>;
 
+  const byStatusData = Object.entries(stats.byStatus).map(([status, count]) => ({ status, count }));
+  const byTypeData = Object.entries(stats.byType).map(([type, count]) => ({ type, count }));
+
   const summaryCards = [
     { label: "Total Evidence", value: stats.totalEvidence, icon: FileText, color: "text-primary" },
-    { label: "Active Cases", value: stats.totalCases, icon: Layers, color: "text-blue-400" },
-    { label: "Pending Transfers", value: stats.pendingTransfers, icon: Clock, color: "text-amber-400" },
-    { label: "Pending Access Requests", value: stats.pendingAccessRequests, icon: AlertCircle, color: "text-red-400" },
-    { label: "Lab Results", value: stats.totalLabs, icon: CheckCircle, color: "text-green-400" },
-    { label: "Unread Notifications", value: stats.unreadNotifications, icon: BarChart2, color: "text-purple-400" },
+    { label: "Total Cases", value: totalCases ?? 0, icon: Layers, color: "text-blue-400" },
   ];
 
   return (
@@ -73,7 +75,7 @@ export default function AnalyticsPage() {
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
           <BarChart2 className="h-6 w-6 text-primary" /> Analytics
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">System-wide evidence and case statistics</p>
+        <p className="text-sm text-muted-foreground mt-1">System-wide evidence statistics (H2).</p>
       </div>
 
       {/* Summary Cards */}
@@ -91,25 +93,23 @@ export default function AnalyticsPage() {
 
       {/* Charts Row */}
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Evidence Over Time */}
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Evidence Submitted — Last 7 Days</h3>
+        <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">
+          <h3 className="text-sm font-semibold text-foreground mb-4">Activity — Last 30 Days</h3>
           <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={stats.evidenceOverTime || []}>
+            <LineChart data={stats.activityByDay}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
               <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 11 }} tickFormatter={d => d.slice(5)} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
               <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="count" stroke="#22c55e" strokeWidth={2} dot={{ fill: "#22c55e", r: 3 }} name="Submitted" />
+              <Line type="monotone" dataKey="count" stroke="#22c55e" strokeWidth={2} dot={{ fill: "#22c55e", r: 3 }} name="Events" />
             </LineChart>
           </ResponsiveContainer>
         </div>
 
-        {/* By Type */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Evidence by Type</h3>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={stats.evidenceByType || []}>
+            <BarChart data={byTypeData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
               <XAxis dataKey="type" tick={{ fill: "#94a3b8", fontSize: 11 }} />
               <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
@@ -119,13 +119,12 @@ export default function AnalyticsPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* By Status (Pie) */}
         <div className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Evidence by Status</h3>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
-              <Pie data={stats.evidenceByStatus || []} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={80} label={({ status, percent }: any) => `${status} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
-                {(stats.evidenceByStatus || []).map((_, i) => (
+              <Pie data={byStatusData} dataKey="count" nameKey="status" cx="50%" cy="50%" outerRadius={80} label={(props: { status?: string; percent?: number }) => `${props.status} ${((props.percent ?? 0) * 100).toFixed(0)}%`} labelLine={false}>
+                {byStatusData.map((_, i) => (
                   <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                 ))}
               </Pie>
