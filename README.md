@@ -71,6 +71,12 @@ stays a documented, separate, manual step.
 - **WSL2 (Windows) or native Linux** - Fabric's own tooling (`fabric-samples`) is written for and
   tested on Linux. This project's own development happened via WSL2 Ubuntu on a Windows host; native
   Linux works too and needs less path-translation fuss (see `docs/DEPLOYMENT_DESIGN.md` section 4.1).
+  **On Windows, run the Spring Boot backend itself from inside a WSL terminal too, not from PowerShell
+  or an IntelliJ Windows run configuration.** The JVM resolves `FABRIC_*_PATH` from its own OS's
+  filesystem, and the real Fabric network lives inside the WSL filesystem - a Windows-native JVM can
+  only reach it via a fragile `\\wsl.localhost\...` UNC path (see `docs/bugs/fabric-env-wsl-paths.md`,
+  D-082). From WSL, `FABRIC_*_PATH` are plain POSIX paths and `./mvnw spring-boot:run` works unmodified
+  against the project mounted at `/mnt/<drive>/...`.
 - **Docker** (with enough resources allocated - a full Fabric test network is 3 CAs + 1 orderer + 2
   peers + chaincode containers, on top of whatever else you're already running).
 - **The Fabric binaries and `fabric-samples`** (`peer`, `fabric-ca-client`, `configtxgen`, etc.) -

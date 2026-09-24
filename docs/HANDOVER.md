@@ -165,6 +165,24 @@ compromise the tamper-evidence layer it sits on top of.
 
 <!-- 5 lines per entry: date + did / left / broken / watch out for. -->
 
+## 2026-09-24 — Fabric env bugs: literal quotes in `.env` + ephemeral wallet dir; switched backend to WSL
+- **Did:** fixed two real bugs (D-082/D-083, `docs/bugs/fabric-env-wsl-paths.md`): `.env`'s Windows-UNC
+  `FABRIC_*_PATH` values were losing their quotes on the Windows-side loader (`InvalidPathException`) and
+  `FABRIC_WALLET_DIR` pointed at a session-scratchpad dir that doesn't survive between sessions. Switched
+  backend execution to WSL (user-confirmed), rewrote `.env` as plain POSIX paths, created a durable
+  `/home/debop/blockevidence-wallet`, and fixed a second latent bug found along the way: `enroll_users.sh`
+  couldn't recover when the CA still remembered dev users as registered but the local wallet was gone
+  (D-084) - added an `identity modify` fallback, same shape as the registrar's own D-060/D-061 recovery.
+- **Left:** README/TESTING_GUIDE updated to say "run the backend from WSL" going forward; not yet updated:
+  any IntelliJ run configuration docs/screenshots that might still show a Windows-native setup.
+- **Broken:** nothing known; verified live end-to-end (see below).
+- **Watch out for:** `wsl.exe -d Ubuntu -- bash -c '...'` invoked from this Windows host's Git-Bash-backed
+  tool chain silently breaks inline `$(...)` command substitution and drops `MSYS_NO_PATHCONV`-sensitive
+  paths - always write Fabric/WSL shell logic to a script file and invoke that file, never inline it.
+- **Verified:** `Started BlockEvidenceApplication` + `Connected to Fabric peer localhost:7051 (... service
+  identity)` in the startup log, `/actuator/health` showing real `ledger`/`eventSync`/`wallet` detail (not
+  `memory-ledger`, not DOWN), and `POST /api/evidence` returning real `201` with genuine IPFS CIDs/hashes.
+
 ## 2026-09-22 — Session 8 (Phase 5 built straight through: F4, F2/F3, F5, I1, L1-L3, K2 — ALL FIVE PHASES NOW COMPLETE)
 - **Did:** audited F4 (no C-06 violation; one accepted residual - free-text reason/note fields could carry
   personal data, undocumented before, D-058). Designed F2/F3 (docs/F2_F3_ENVELOPE_ENCRYPTION_DESIGN.md, approved

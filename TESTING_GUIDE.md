@@ -108,28 +108,37 @@ already held by `be-postgres`/`be-ipfs`, and vice versa.
 
 ### 2.3 Spring Boot backend (pointed at real Fabric, not `memory-ledger`)
 
+**Run this from a WSL terminal, not Windows PowerShell or an IntelliJ Windows run configuration** (D-082,
+`docs/bugs/fabric-env-wsl-paths.md`). The JVM resolves `FABRIC_*_PATH` from its own OS's filesystem, and
+the real Fabric network lives inside WSL - a Windows-native JVM can only reach it via a fragile
+`\\wsl.localhost\...` UNC path. From WSL, the project (mounted under `/mnt/<drive>/...`) and its `mvnw`
+wrapper work unmodified:
+
 ```bash
+cd /mnt/e/FINAL\ YEAR\ PROJECT   # adjust the drive/path to match your mount
 set -a && source .env && set +a
-SPRING_PROFILES_ACTIVE=dev ./mvnw.cmd spring-boot:run   # Windows; drop .cmd elsewhere
+SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
 ```
 
-`.env` must have, in addition to the four variables above, the real Fabric connection settings (paths
-are Windows UNC paths into WSL, per `FABRIC_RUNBOOK.md` section 4):
+`.env` must have, in addition to the four variables above, the real Fabric connection settings - **plain
+POSIX paths, no quotes needed** (this is the point of running from WSL: no UNC paths, no backslashes, no
+quoting gotchas):
 
 ```bash
-FABRIC_TLS_CERT_PATH='\\wsl.localhost\Ubuntu\home\debop\crime-evidence-mgmt\fabric-samples\test-network\organizations\peerOrganizations\org1.example.com\peers\peer0.org1.example.com\tls\ca.crt'
-FABRIC_CERT_PATH='\\wsl.localhost\Ubuntu\home\debop\crime-evidence-mgmt\fabric-samples\test-network\organizations\peerOrganizations\org1.example.com\users\User1@org1.example.com\msp\signcerts'
-FABRIC_KEY_PATH='\\wsl.localhost\Ubuntu\home\debop\crime-evidence-mgmt\fabric-samples\test-network\organizations\peerOrganizations\org1.example.com\users\User1@org1.example.com\msp\keystore'
-FABRIC_WALLET_DIR='<your durable wallet path - see Part 5>'
+FABRIC_TLS_CERT_PATH=/home/debop/crime-evidence-mgmt/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+FABRIC_CERT_PATH=/home/debop/crime-evidence-mgmt/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts
+FABRIC_KEY_PATH=/home/debop/crime-evidence-mgmt/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore
+FABRIC_WALLET_DIR=/home/debop/blockevidence-wallet   # durable, outside any repo checkout - see Part 5
 DB_URL=jdbc:postgresql://localhost:5433/blockevidence
 ```
 
-**Real gotcha (values above use single quotes, not left bare)**: if you `source .env` in a bash shell
-(as the command above does), unquoted backslashes are silently swallowed as shell escape characters -
-a UNC path like `\\wsl.localhost\Ubuntu\...` written *without* quotes comes out the other side as
-`wsl.localhostUbuntu...`, every separator gone, and the backend fails with a plain
-`java.nio.file.NoSuchFileException` that gives no hint the value was ever mangled (found live, D-071).
-Always wrap these four path values in single quotes in `.env`.
+**Historical gotcha, no longer applicable once you're on WSL-native paths (kept for context, D-071)**:
+the previous setup used Windows UNC paths wrapped in single quotes so a bash `source .env` wouldn't
+swallow the backslashes as escape characters - and a *different*, Windows-side loader was separately
+found to include the quote characters literally instead of stripping them, producing
+`java.nio.file.InvalidPathException: Illegal char <:> at index 2` (`docs/bugs/fabric-env-wsl-paths.md`).
+Both failure modes go away once the paths are plain POSIX with no backslashes and no quotes to get
+wrong.
 
 **Confirm it's actually using real Fabric, not `memory-ledger`** - this is the single most important
 check in this whole guide, since the app boots and answers requests either way with no visible
@@ -239,10 +248,9 @@ This project has hit this exact class of problem twice already (D-060/D-061, D-0
 always the same: `BE_REGISTRAR_SECRET` or the enrolled-user wallet was never given a **durable** home,
 so it got lost between sessions. Fix it properly this time rather than repeating the recovery a third
 time: pick **one durable wallet directory now** (recommended: `/home/debop/blockevidence-wallet` inside
-WSL - `enroll_users.sh` already runs from WSL, so this needs no Windows/WSL path translation at all)
-and set `FABRIC_WALLET_DIR` to it (as its Windows UNC equivalent,
-`\\wsl.localhost\Ubuntu\home\debop\blockevidence-wallet`, in `.env`) going forward. **Never** point it
-at a temp/scratch directory again.
+WSL - both the backend and `enroll_users.sh` run from WSL as of D-082, so this needs no Windows/WSL path
+translation at all) and set `FABRIC_WALLET_DIR` to that same plain POSIX path directly in `.env`. **Never**
+point it at a temp/scratch directory again.
 
 ### 5a. The registrar secret (`be-registrar`) is lost
 `bootstrap_registrar.sh` says this itself when re-run: it's idempotent and will tell you `be-registrar`
@@ -260,9 +268,17 @@ FABRIC_CA_CLIENT_HOME=$W/admin fabric-ca-client enroll -u "https://$BOOT@localho
 NEW_SECRET=$(openssl rand -hex 16)
 FABRIC_CA_CLIENT_HOME=$W/admin fabric-ca-client identity modify be-registrar --secret "$NEW_SECRET" \
   --caname ca-org1 --tls.certfiles "$TLS"
-echo "New BE_REGISTRAR_SECRET: $NEW_SECRET"   # use this value below, then forget it - never write it to a file
+mkdir -p ~/.blockevidence-secrets && chmod 700 ~/.blockevidence-secrets
+echo "$NEW_SECRET" > ~/.blockevidence-secrets/be-registrar-secret && chmod 600 ~/.blockevidence-secrets/be-registrar-secret
 rm -rf "$W"
 ```
+**Deliberately written to a file this time (D-085)**, not just echoed and discarded as earlier versions
+of this guide said: keeping it purely ephemeral is exactly what caused this recovery to be needed twice
+already. `~/.blockevidence-secrets/be-registrar-secret`, `chmod 600`, in the WSL operator's own home
+directory - outside any repo checkout, never committed. Read it back with
+`BE_REGISTRAR_SECRET=$(cat ~/.blockevidence-secrets/be-registrar-secret)` next time, instead of
+re-deriving it from scratch.
+
 Then re-run `enroll_users.sh` with that new secret (5b) - it's idempotent per user, so this is safe to
 run even if most users are already enrolled.
 
@@ -280,13 +296,14 @@ ls /home/debop/blockevidence-wallet | wc -l   # must be >= the count above
 ```
 
 ### 5c. A specific already-registered user's secret was consumed and their wallet is gone
-(`enroll_users.sh` alone won't fix this - `--id.maxenrollments 1` means their original one-time secret
-is already spent, and re-registering the same user id is rejected as a duplicate.) Reissue that one
-user's secret the same way as 5a, using `identity modify <user-id> --secret <new> --maxenrollments -1`
-(not `1` - resetting `maxenrollments` back to `1` does **not** reset the CA's internal
-already-enrolled counter for an identity that already used its one enrollment; `-1` sidesteps that,
-D-061), then enroll with the new secret and copy `cert.pem`/`key.pem` into
-`$WALLET_DIR/<user-id>/` by hand (or adapt the loop body inside `enroll_users.sh` for a single id).
+**As of D-084, `enroll_users.sh` handles this automatically** - `--id.maxenrollments 1` means their
+original one-time secret is already spent, so a plain `register` is rejected as a duplicate; the script
+now catches exactly that "already registered" response and falls back to
+`identity modify <user-id> --secret <new> --maxenrollments -1` itself (not `1` - resetting
+`maxenrollments` back to `1` does **not** reset the CA's internal already-enrolled counter for an
+identity that already used its one enrollment; `-1` sidesteps that, D-061) before enrolling with the new
+secret. Just re-run 5b with `FORCE=1` if the local wallet still has a stale cert for that user (5b alone
+skips anyone with an existing wallet entry, regardless of whether it still matches the CA).
 
 ### 5d. Dev users' database passwords stopped matching `BLOCKEVIDENCE_DEV_SEED_PASSWORD`
 Not a Fabric problem, but the same "session drift" class of issue, and it looks like an auth failure

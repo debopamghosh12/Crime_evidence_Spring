@@ -48,9 +48,21 @@ while IFS=',' read -r id role email; do
   fi
 
   SECRET=$(openssl rand -hex 16)
-  FABRIC_CA_CLIENT_HOME=$W/reg fabric-ca-client register --caname ca-org1 \
+  # The CA remembers a registered identity even after a local wallet is lost (D-060/D-061's same recurring
+  # failure mode, now seen for user identities too, not just the registrar). register fails with "already
+  # registered" in that case - fall back to resetting the existing identity's secret instead of aborting,
+  # since we have no way to know its old secret and don't need to: we're about to enroll fresh anyway.
+  if ! FABRIC_CA_CLIENT_HOME=$W/reg fabric-ca-client register --caname ca-org1 \
     --id.name "$id" --id.secret "$SECRET" --id.type client --id.affiliation org1.department1 \
-    --id.maxenrollments 1 --id.attrs "role=$role:ecert" --tls.certfiles "$TLS" >/dev/null 2>&1
+    --id.maxenrollments 1 --id.attrs "role=$role:ecert" --tls.certfiles "$TLS" >"$W/register.log" 2>&1; then
+    if grep -q "already registered" "$W/register.log"; then
+      FABRIC_CA_CLIENT_HOME=$W/reg fabric-ca-client identity modify "$id" --secret "$SECRET" \
+        --maxenrollments -1 --caname ca-org1 --tls.certfiles "$TLS" >/dev/null 2>&1
+    else
+      cat "$W/register.log" >&2
+      exit 1
+    fi
+  fi
 
   rm -rf "$W/user"
   FABRIC_CA_CLIENT_HOME=$W/user fabric-ca-client enroll -u "https://$id:$SECRET@$URL" --caname ca-org1 \

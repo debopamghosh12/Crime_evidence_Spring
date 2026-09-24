@@ -2679,3 +2679,38 @@ removed-block
    ledger : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
    ipfs   : {'status': 'UP'}
 ```
+
+## Backend-from-WSL check (D-082/D-083/D-084, `docs/bugs/fabric-env-wsl-paths.md`) — run 2026-09-24
+
+New check, added because a check for this didn't exist yet. Confirms the Windows-side `.env`
+quoting/UNC-path bug and the ephemeral-wallet bug are both actually fixed, backend running from WSL.
+
+```
+$ wsl -d Ubuntu -- bash -c "java -version"
+openjdk version "21.0.12.1" 2026-08-18
+
+$ wsl -d Ubuntu -- bash -c "cd '/mnt/e/FINAL YEAR PROJECT' && ./mvnw -v"
+Apache Maven 3.9.16 ... Java version: 21.0.12.1 ... OS name: "linux" ...
+
+$ SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run   # from WSL, .env sourced, plain POSIX FABRIC_* paths
+2026-09-24T07:40:27.656Z  INFO ... c.b.backend.BlockEvidenceApplication  : Started BlockEvidenceApplication in 75.801 seconds
+2026-09-24T07:40:35.002Z  INFO ... c.b.backend.ledger.FabricLedgerService : Connected to Fabric peer localhost:7051 (channel crimechannel, chaincode evidence, msp Org1MSP, service identity)
+# no InvalidPathException, no NoSuchFileException, no repeat of the warning afterward
+
+$ curl -s http://localhost:8080/actuator/health -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+   eventSync: {'details': {'consecutiveFailures': 0, ...}, 'status': 'UP'}
+   ledger   : {'details': {'detail': 'chaincode evidence answering on channel crimechannel via localhost:7051 as Org1MSP'}, 'status': 'UP'}
+   wallet   : {'details': {'detail': 'No wallet identity expires within 30 days'}, 'status': 'UP'}
+
+$ curl -s -w '\nHTTP_STATUS:%{http_code}\n' -X POST http://localhost:8080/api/evidence \
+    -H "Authorization: Bearer $TOKEN" \
+    -F 'metadata={"caseId":"FAB-LIVE-1","type":"DIGITAL","description":"WSL bug-fix verification item"};type=application/json' \
+    -F 'file=@/tmp/test-evidence.txt;type=text/plain'
+{"evidenceId":"EV-f60cea7a-a817-4eb6-90b9-ee77b69a7995", ... "status":"COLLECTED", ...}
+HTTP_STATUS:201
+```
+
+Also exercised the new `enroll_users.sh` already-registered-identity fallback (D-084) live, not just in
+theory: all 6 dev users were already registered at the CA from before the wallet was lost, so every one
+of them hit the new `identity modify --secret ... --maxenrollments -1` fallback path, and all 6 enrolled
+successfully into the new durable wallet (`/home/debop/blockevidence-wallet`).

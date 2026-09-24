@@ -890,3 +890,63 @@ Claude-in-Chrome's own secret-value guard from blocking the raw token in a tool 
 ever returned), clicked the real Sign Out button, confirmed via `read_network_requests` that a real
 `POST /api/auth/logout` fired and returned 204, then confirmed the captured token now gets a real `401` from
 `/api/auth/refresh` - the token is genuinely revoked server-side, not just forgotten client-side.
+
+## D-082 — Backend runs from WSL, not Windows, whenever `FABRIC_*` is set (2026-09-24)
+
+Chose to run the Spring Boot backend (`./mvnw spring-boot:run`) from inside WSL2 Ubuntu instead of from
+Windows PowerShell, for any session where real Fabric is in use. Rejected keeping Windows-native
+execution and just fixing the immediate quoting bug: the JVM only resolves `FABRIC_*_PATH` values from
+its own OS's filesystem, and the actual Fabric network (`fabric-samples`) lives inside the WSL
+filesystem - a Windows-native JVM can only reach it via a `\\wsl.localhost\...` UNC path, which is
+fragile (see D-071, `docs/bugs/fabric-env-wsl-paths.md`) and adds a translation layer with no benefit.
+Running the JVM inside WSL lets `FABRIC_*_PATH` be plain POSIX paths under
+`/home/debop/crime-evidence-mgmt/fabric-samples/...`, matching how the Fabric network, Docker, and
+`scripts/fabric/*.sh` already run. Confirmed the Maven wrapper (`./mvnw`) works unmodified from WSL
+against the project mounted at `/mnt/e/FINAL YEAR PROJECT`, and Postgres/IPFS/Fabric containers (already
+Docker-based) are reachable via `localhost` from WSL exactly as they were from Windows. User confirmed
+this choice explicitly (`AskUserQuestion`: "Switch to running the backend from WSL (Recommended)").
+Cost: anyone building/running this backend now needs a WSL terminal, not just an IntelliJ Windows run
+configuration - `README.md` Tier 2 and `TESTING_GUIDE.md` updated to say so.
+
+## D-083 — `FABRIC_WALLET_DIR` moved to a durable WSL-home path, never inside the repo (2026-09-24)
+
+Chose `/home/debop/blockevidence-wallet` (WSL home directory, outside any repo checkout) as the durable
+`FABRIC_WALLET_DIR`. The task that prompted this fix suggested a `wallet/` folder at the project root;
+rejected that specifically, flagged to the user rather than silently done differently, because it
+contradicts `A2_IDENTITY_DESIGN.md`'s explicit requirement that per-user private keys never live inside
+a repo checkout, gitignored or not (`CONSTRAINTS.md` C-07: real key material one accidental `git add -A`
+away from being committed is a risk a `.gitignore` line does not fully remove). The previous wallet path
+was a session-scratchpad directory that does not survive between sessions - the actual, separate root
+cause of the reported "wallet directory no longer exists" failure, distinct from the quoting bug. The
+new path is a plain, permanent directory in the WSL user's home, created once and re-used by
+`scripts/fabric/enroll_users.sh` on every future run.
+
+## D-084 — `enroll_users.sh` now recovers from an already-CA-registered identity (2026-09-24)
+
+`enroll_users.sh`'s idempotency check only ever looked at the local wallet directory (a cert file
+present = skip). When the wallet is lost but the CA still remembers the identity as registered (exactly
+what had happened here - the 6 dev users were registered at the CA in an earlier session before the
+scratchpad wallet vanished), `fabric-ca-client register` correctly fails with "already registered", and
+the script aborted (`set -e`) with no visible error, since that command's stderr was suppressed. Fixed by
+catching that specific failure and falling back to `fabric-ca-client identity modify <id> --secret
+<newsecret> --maxenrollments -1` instead of aborting - the same recovery shape already used for the
+`be-registrar` identity itself (D-060/D-061). Rejected leaving it as a manual recovery step: this is the
+third time in this project a "CA remembers, local secret is lost" failure has had to be diagnosed from
+scratch: automating the one safe recovery (reset the secret, since we are about to enroll fresh and never
+need the old one) removes the recurring manual step. Any other `register` failure still aborts and prints
+the real error, unchanged.
+
+## D-085 — `be-registrar`'s secret now persisted to a durable WSL-local file (2026-09-24)
+
+`bootstrap_registrar.sh`'s original design comment said the registrar secret should live "only in the
+operator's shell... never written to... a file". Deviated from that this session: after reissuing the
+secret (same recovery pattern as D-060/D-061, needed a third time), saved it to
+`/home/debop/.blockevidence-secrets/be-registrar-secret` (WSL home directory, `chmod 600`, outside any
+repo checkout, never committed - not a project file, C-07 is about what ships in the repo). Rejected
+keeping it purely ephemeral (shell-only) as the original design intended: that is exactly what caused
+this same recovery to be needed three separate times - an ephemeral secret that only lives in one
+terminal's scrollback is lost the moment that terminal closes, with no way to tell "lost" apart from
+"never set" until something fails downstream. A `chmod 600` file in the operator's own home directory
+gives the same effective protection (only the operator account can read it) while surviving between
+sessions, which is the actual problem being solved. `scripts/fabric/enroll_users.sh` usage should read
+this file rather than expect the secret to be re-typed each time.
